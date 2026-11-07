@@ -115,7 +115,7 @@ def main() -> None:
     failed = [r for r in rows if r["status"] == "FAIL"]
     proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or \
         os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or ""
-    scrape_failed = [r for r in failed if r["engine"] in ("ddg", "bing", "baidu", "sogouweixin")]
+    scrape_failed = [r for r in failed if r["engine"] in ("ddg", "bing", "baidu", "sogouweb", "so360", "sogouweixin")]
     proxy_hint = []
     if proxy and len(scrape_failed) >= 2:
         proxy_hint = [

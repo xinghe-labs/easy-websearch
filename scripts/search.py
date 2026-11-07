@@ -539,7 +539,7 @@ def engine_baidu(ctx):
     return tops
 
 
-def _resolve_sogou_links(urls, timeout):
+def _resolve_sogou_links(urls, timeout, base="https://weixin.sogou.com"):
     """Sogou /link pages return a JS stub; the real target is embedded in it."""
     resolved = []
     for u in urls:
@@ -547,7 +547,7 @@ def _resolve_sogou_links(urls, timeout):
             resolved.append(u)
             continue
         try:
-            full = urllib.parse.urljoin("https://weixin.sogou.com", u)
+            full = urllib.parse.urljoin(base, u)
             _, body = http_text(full, timeout=min(timeout, 4), direct=True)
             # Stub:  url += 'https://mp.';  url += 'weixin.qq.c';  …
             target = "".join(m.group(1) for m in
@@ -564,6 +564,83 @@ def _resolve_sogou_links(urls, timeout):
             pass  # keep the /link URL
         resolved.append(u)
     return resolved
+
+
+def _snippet_after(body: str, from_idx: int, length: int = 200) -> str:
+    return strip_tags(body[from_idx:from_idx + 700])[:length]
+
+
+def _resolve_so360_links(urls, timeout):
+    """so.com/link?m= pages redirect via window.location.replace("target")."""
+    resolved = []
+    for u in urls:
+        if not re.search(r"so\.com/link", u):
+            resolved.append(u)
+            continue
+        try:
+            _, body = http_text(u, timeout=min(timeout, 4), direct=True)
+            m = (re.search(r'window\.location\.replace\("([^"]+)"\)', body) or
+                 re.search(r'window\.location\.href\s*=\s*"([^"]+)"', body) or
+                 re.search(r"URL='([^']+)'", body))
+            if m and m.group(1).startswith("http"):
+                resolved.append(m.group(1))
+                continue
+        except (RuntimeError, urllib.error.URLError, OSError):
+            pass  # keep the wrapper URL
+        resolved.append(u)
+    return resolved
+
+
+def engine_sogou_web(ctx):
+    params = {"query": ctx["query"]}
+    status, body = http_text("https://www.sogou.com/web?" + urllib.parse.urlencode(params),
+                             timeout=ctx["timeout"], direct=True,
+                             headers={"referer": "https://www.sogou.com/"})
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    if re.search(r"antispider|验证码|seccode", body, re.I):
+        raise RuntimeError("sogou anti-bot page (captcha) — retry later")
+    results = []
+    for m in re.finditer(r'<h3[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>', body):
+        title = strip_tags(m.group(2))
+        if not title:
+            continue
+        results.append({"title": title, "url": html.unescape(m.group(1)),
+                        "snippet": _snippet_after(body, m.end())})
+    if not results:
+        raise RuntimeError("no results parsed")
+    tops = results[: ctx["n"]]
+    urls = _resolve_sogou_links([r["url"] for r in tops], ctx["timeout"],
+                                base="https://www.sogou.com")
+    for r, u in zip(tops, urls, strict=False):
+        r["url"] = u
+    return tops
+
+
+def engine_so360(ctx):
+    params = {"q": ctx["query"]}
+    status, body = http_text("https://www.so.com/s?" + urllib.parse.urlencode(params),
+                             timeout=ctx["timeout"], direct=True,
+                             headers={"referer": "https://www.so.com/"})
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    if re.search(r"验证码|wappass", body, re.I):
+        raise RuntimeError("so360 anti-bot page (captcha) — retry later")
+    results = []
+    for m in re.finditer(r'<h3[^>]*class="res-title[^"]*"[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>', body):
+        title = strip_tags(m.group(2))
+        if not title:
+            continue
+        desc = re.search(r'<p class="res-desc[^"]*"[^>]*>([\s\S]*?)</p>',
+                         body[m.start():m.start() + 900])
+        results.append({"title": title, "url": html.unescape(m.group(1)),
+                        "snippet": strip_tags(desc.group(1))[:300] if desc else ""})
+    if not results:
+        raise RuntimeError("no results parsed")
+    tops = results[: ctx["n"]]
+    for r, u in zip(tops, _resolve_so360_links([r["url"] for r in tops], ctx["timeout"]), strict=False):
+        r["url"] = u
+    return tops
 
 
 def engine_sogou_weixin(ctx):
@@ -583,7 +660,8 @@ def engine_sogou_weixin(ctx):
         results.append({"title": title, "url": html.unescape(m.group(1)), "snippet": ""})
     if not results:
         raise RuntimeError("no results parsed")
-    urls = _resolve_sogou_links([r["url"] for r in results[: ctx["n"]]], ctx["timeout"])
+    urls = _resolve_sogou_links([r["url"] for r in results[: ctx["n"]]], ctx["timeout"],
+                                base="https://weixin.sogou.com")
     for r, u in zip(results[: ctx["n"]], urls, strict=False):
         r["url"] = u
     return results[: ctx["n"]]
@@ -649,6 +727,8 @@ ENGINES = {
     "ollama": (engine_ollama, "OLLAMA_API_KEY", frozenset()),
     "searxng": (engine_searxng, "SEARXNG_BASE_URL", frozenset()),
     "baidu": (engine_baidu, None, frozenset()),
+    "sogouweb": (engine_sogou_web, None, frozenset()),
+    "so360": (engine_so360, None, frozenset()),
     "sogouweixin": (engine_sogou_weixin, None, frozenset({"backup"})),
     "anysearch": (engine_anysearch, "ANYSEARCH_API_KEY", frozenset({"optional_key", "backup"})),
     "keenable": (engine_keenable, "KEENABLE_API_KEY", frozenset({"optional_key", "backup"})),

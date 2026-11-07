@@ -94,7 +94,7 @@ const tested = rows.filter((r) => r.status !== "SKIP");
 const failed = rows.filter((r) => r.status === "FAIL");
 const proxy = process.env.HTTPS_PROXY || process.env.https_proxy ||
   process.env.HTTP_PROXY || process.env.http_proxy || "";
-const SCRAPE = ["ddg", "bing", "baidu", "sogouweixin"];
+const SCRAPE = ["ddg", "bing", "baidu", "sogouweb", "so360", "sogouweixin"];
 const scrapeFailed = failed.filter((r) => SCRAPE.includes(r.engine));
 const proxyHint = (proxy && scrapeFailed.length >= 2)
   ? [`hint: ${scrapeFailed.length} scrape engines failed while a proxy is active —`,
