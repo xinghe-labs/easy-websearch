@@ -58,6 +58,47 @@ export SEARXNG_BASE_URL=http://localhost:8080
 The `searxng` engine joins the pool automatically (doctor shows it OK once
 reachable). `--lang zh` / `--lang en` map to SearXNG's `language` parameter.
 
+## 3.1 Remote server deployment (VPS / LAN server)
+
+Everything above works unchanged on a Linux server. Differences from
+localhost:
+
+- **Bind / firewall**: either publish `8080` and restrict it in the cloud
+  firewall to your own IP, or bind to `127.0.0.1:8080` and expose through a
+  reverse proxy (Caddy example below). Never leave an unauthenticated
+  instance open to the internet — it will be abused and your server IP will
+  get rate-limited by upstream engines.
+- **Caddy with basic auth** (optional but recommended for public IPs):
+
+  ```caddyfile
+  searx.example.com {
+      basic_auth {
+          you $2a$14$<bcrypt-hash>
+      }
+      reverse_proxy 127.0.0.1:8080
+  }
+  ```
+
+  Then the skill URL carries the credentials:
+  `SEARXNG_BASE_URL=https://you:pass@searx.example.com` (the Node runtime
+  passes basic-auth URLs through; the Python runtime needs the credentials
+  in the URL too — both send them via the standard Authorization header).
+
+- **Mainland-China servers**: SearXNG aggregates Google/Bing/DDG upstreams;
+  from a CN server those are unreachable and SearXNG returns empty results.
+  Options: (a) give SearXNG an outgoing proxy in `settings.yml`:
+
+  ```yaml
+  outgoing:
+    proxies:
+      http: http://127.0.0.1:7890
+      https: http://127.0.0.1:7890
+  ```
+
+  (b) run the instance on a server outside CN, or (c) skip SearXNG on CN
+  servers — the skill's built-in `baidu`/`bing` engines already cover CN
+  networks without any proxy.
+
 ## 4. Network notes (common gotchas)
 
 - **Local instance + `HTTPS_PROXY`**: the skill's Node runtime only proxies
