@@ -643,13 +643,21 @@ async function main() {
   }
   if (dirty && !args.noCooldown) saveCooldowns(state);
 
+  // --days is not supported by every engine — say so instead of silently
+  // ignoring it.
+  if (args.days > 0) {
+    for (const s of statuses) {
+      if (s.name === "bing" && s.ok) s.note = "days ignored by bing";
+    }
+  }
+
   const allEngines = [...cooldownSkipped, ...statuses];
   const fused = fuse(statuses.filter((s) => s.ok)).slice(0, args.n);
 
   if (args.json) {
     console.log(JSON.stringify({
       query: ctx.query,
-      engines: allEngines.map(({ name, ok, count, ms, error }) => ({ name, ok, count, ms, error })),
+      engines: allEngines.map(({ name, ok, count, ms, error, note }) => ({ name, ok, count, ms, error, ...(note ? { note } : {}) })),
       results: fused.map((r, i) => ({
         rank: i + 1, title: r.title, url: r.url, snippet: r.snippet,
         score: +r.score.toFixed(4), engines: r.engines,
@@ -657,7 +665,7 @@ async function main() {
     }, null, 2));
   } else {
     const engineLine = allEngines
-      .map((s) => `${s.name}: ${s.ok ? s.count + " results" : s.count === 0 && s.ms === 0 && s.error.startsWith("skipped") ? s.error : "FAILED (" + s.error + ")"} in ${s.ms}ms`)
+      .map((s) => `${s.name}: ${s.ok ? s.count + " results" : s.count === 0 && s.ms === 0 && s.error.startsWith("skipped") ? s.error : "FAILED (" + s.error + ")"} in ${s.ms}ms${s.note ? ` [${s.note}]` : ""}`)
       .join("\n  ");
     console.log(`engines:\n  ${engineLine}\n`);
     if (fused.length === 0) {

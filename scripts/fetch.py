@@ -78,6 +78,8 @@ def html_to_markdown(body: str) -> str:
     h = re.sub(r"<style[\s\S]*?</style>", "", h, flags=re.I)
     h = re.sub(r"<noscript[\s\S]*?</noscript>", "", h, flags=re.I)
     h = re.sub(r"<(nav|header|footer|aside|form)[^>]*>[\s\S]*?</\1>", "", h, flags=re.I)
+    # Footer/boilerplate blocks identified by id/class (ICP 备案, copyright…)
+    h = re.sub(r"<div[^>]*(?:id|class)=[\"'][^\"']*(?:footer|copyright|icp|beian)[^\"']*[\"'][^>]*>[\s\S]*?</div>", "", h, flags=re.I)
     h = re.sub(r"<!--[\s\S]*?-->", "", h)
 
     m = re.search(r"<title[^>]*>([\s\S]*?)</title>", h, re.I)
@@ -149,7 +151,8 @@ def extract(url: str, timeout: float, max_chars: int) -> dict:
     return {"ok": False, "url": url,
             "error": (f"direct + firecrawl extraction failed "
                       f"({direct_error or 'empty/short content'}; {firecrawl_error or 'not configured/empty'}); "
-                      f"reader fallback HTTP {status}")}
+                      f"reader fallback HTTP {status} "
+                      f"(note: fetch targets HTML pages — read JSON/text endpoints directly)")}
 
 
 def main() -> None:

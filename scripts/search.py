@@ -609,20 +609,27 @@ def main():
     if dirty and not args.no_cooldown:
         _save_cooldowns(state)
 
+    # --days is not supported by every engine — say so instead of silently
+    # ignoring it.
+    if ctx["days"] > 0:
+        for s in statuses:
+            if s["name"] == "bing" and s["ok"]:
+                s["note"] = "days ignored by bing"
+
     all_engines = cooldown_skipped + statuses
     fused = fuse(ok_results)[: args.num]
 
     if args.json:
         print(json.dumps({
             "query": ctx["query"],
-            "engines": [{k: s[k] for k in ("name", "ok", "count", "ms", "error")} for s in all_engines],
+            "engines": [{k: s[k] for k in ("name", "ok", "count", "ms", "error", "note") if k in s} for s in all_engines],
             "results": [{"rank": i + 1, "title": r["title"], "url": r["url"],
                          "snippet": r["snippet"], "score": round(r["score"], 4),
                          "engines": r["engines"]} for i, r in enumerate(fused)],
         }, ensure_ascii=False, indent=2))
     else:
         lines = "\n  ".join(
-            f"{s['name']}: {s['count']} results in {s['ms']}ms" if s["ok"]
+            f"{s['name']}: {s['count']} results in {s['ms']}ms" + (f" [{s['note']}]" if s.get('note') else "") if s["ok"]
             else f"{s['name']}: {s['error']}" if s["error"].startswith("skipped")
             else f"{s['name']}: FAILED ({s['error']}) in {s['ms']}ms" for s in all_engines)
         print(f"engines:\n  {lines}\n")

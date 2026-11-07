@@ -69,6 +69,9 @@ automatically (Node via a built-in CONNECT tunnel; Python via urllib).
 
 ## Search
 
+For non-English queries pass `--lang zh` (or `en`) — without it the results
+follow the network location rather than the query language.
+
 ```bash
 node scripts/search.mjs "query" [options]
 python3 scripts/search.py "query" [options]

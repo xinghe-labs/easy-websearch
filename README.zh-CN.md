@@ -43,6 +43,8 @@
 
 ### Claude Code / 任何支持 Agent Skills 的工具
 
+把本文件夹放进 skills 目录即可（重复执行 add 命令会原地更新已装版本）：
+
 ```bash
 # 用户级
 git clone https://github.com/xinghe-labs/easy-websearch ~/.claude/skills/easy-websearch
@@ -55,6 +57,12 @@ git clone https://github.com/xinghe-labs/easy-websearch .claude/skills/easy-webs
 
 ```bash
 npx skills add xinghe-labs/easy-websearch
+```
+
+验证安装：
+
+```bash
+node scripts/doctor.mjs    # 每个引擎：可达 / 缺 key / 冷却中
 ```
 
 ### 可选的 key 增强

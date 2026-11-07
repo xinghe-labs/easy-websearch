@@ -43,20 +43,27 @@ baselines degrade, a `doctor` self-check command, and a failure cooldown.
 
 ### Claude Code / any Agent Skills runtime
 
-Copy or clone this folder into your skills directory:
+Copy or clone this folder into your skills directory (re-running the add
+command updates an existing installation in place):
 
 ```bash
 # user-level
-git clone https://github.com/<you>/easy-websearch ~/.claude/skills/easy-websearch
+git clone https://github.com/xinghe-labs/easy-websearch ~/.claude/skills/easy-websearch
 
 # or project-level
-git clone https://github.com/<you>/easy-websearch .claude/skills/easy-websearch
+git clone https://github.com/xinghe-labs/easy-websearch .claude/skills/easy-websearch
 ```
 
 With the [skills CLI](https://skills.sh):
 
 ```bash
-npx skills add <you>/easy-websearch
+npx skills add xinghe-labs/easy-websearch
+```
+
+Verify the install:
+
+```bash
+node scripts/doctor.mjs    # every engine: reachable / key missing / cooldown
 ```
 
 ### Optional engine keys

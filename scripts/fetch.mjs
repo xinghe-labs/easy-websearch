@@ -114,6 +114,8 @@ function htmlToMarkdown(html) {
     .replace(/<style[\s\S]*?<\/style>/gi, "")
     .replace(/<noscript[\s\S]*?<\/noscript>/gi, "")
     .replace(/<(nav|header|footer|aside|form)[^>]*>[\s\S]*?<\/\1>/gi, "")
+    // Footer/boilerplate blocks identified by id/class (ICP 备案, copyright…)
+    .replace(/<div[^>]*(?:id|class)=["'][^"']*(?:footer|copyright|icp|beian)[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, "")
     .replace(/<!--[\s\S]*?-->/g, "");
   const title = (h.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1];
   const desc = (h.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i) ||
@@ -171,10 +173,10 @@ async function run() {
     if (status === 200 && body && body.trim().length > 100) {
       return { ok: true, via: "r.jina.ai", url, chars: body.length, content: body.slice(0, flags.maxChars) };
     }
-    return { ok: false, url, error: `direct + firecrawl extraction failed; reader fallback HTTP ${status}` };
+    return { ok: false, url, error: `direct + firecrawl extraction failed; reader fallback HTTP ${status} (note: fetch targets HTML pages — read JSON/text endpoints directly)` };
   } catch (e) {
     // Both paths failed — report structured failure instead of crashing.
-    return { ok: false, url, error: `direct extraction failed; reader fallback: ${e.message}` };
+    return { ok: false, url, error: `direct extraction failed; reader fallback: ${e.message} (note: fetch targets HTML pages — read JSON/text endpoints directly)` };
   }
 }
 
