@@ -685,6 +685,129 @@ def _searxng_base_and_auth(raw):
     return m.group(1) + m.group(3), authorization
 
 
+# ── Vertical engines (official keyless APIs) — auto-activated by query intent ──
+
+def engine_wikipedia(ctx):
+    cjk = bool(re.search(r"[\u4e00-\u9fa5]", ctx["query"]))
+    lang = ctx["lang"] if ctx["lang"] in ("zh", "en") else ("zh" if cjk else "en")
+    params = {"action": "query", "list": "search", "srsearch": ctx["query"],
+              "format": "json", "srlimit": str(min(ctx["n"], 10))}
+    status, body = http_text(f"https://{lang}.wikipedia.org/w/api.php?{urllib.parse.urlencode(params)}",
+                             timeout=ctx["timeout"], headers={"accept": "application/json"})
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    items = parse_json(body).get("query", {}).get("search", [])
+    return [{"title": r["title"],
+             "url": f"https://{lang}.wikipedia.org/wiki/{urllib.parse.quote(str(r['title']).replace(' ', '_'))}",
+             "snippet": strip_tags(r.get("snippet", ""))} for r in items]
+
+
+def engine_stack_exchange(ctx):
+    params = {"intitle": ctx["query"], "site": "stackoverflow",
+              "pagesize": str(min(ctx["n"], 10))}
+    status, body = http_text("https://api.stackexchange.com/2.3/search/excerpts?" + urllib.parse.urlencode(params),
+                             timeout=ctx["timeout"], headers={"accept": "application/json"})
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    items = parse_json(body).get("items", [])
+    return [{"title": strip_tags(r["title"]),
+             "url": f"https://stackoverflow.com/q/{r['question_id']}",
+             "snippet": strip_tags(r.get("excerpt", ""))[:300]}
+            for r in items if r.get("question_id") and r.get("title")]
+
+
+def engine_hn(ctx):
+    params = {"query": ctx["query"], "hitsPerPage": str(min(ctx["n"], 10))}
+    status, body = http_text("https://hn.algolia.com/api/v1/search?" + urllib.parse.urlencode(params),
+                             timeout=ctx["timeout"], headers={"accept": "application/json"})
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    hits = parse_json(body).get("hits", [])
+    out = []
+    for r in hits:
+        if not r.get("title"):
+            continue
+        out.append({"title": r["title"],
+                    "url": r.get("url") or f"https://news.ycombinator.com/item?id={r['objectID']}",
+                    "snippet": strip_tags(r.get("story_text") or r.get("comment_text") or "")[:300]})
+    return out
+
+
+def engine_github(ctx):
+    params = {"q": ctx["query"], "per_page": str(min(ctx["n"], 10))}
+    status, body = http_text("https://api.github.com/search/repositories?" + urllib.parse.urlencode(params),
+                             timeout=ctx["timeout"],
+                             headers={"accept": "application/vnd.github+json"})
+    if status == 403:
+        raise RuntimeError("GitHub rate limit (10 searches/min unauthenticated) — cooldown covers")
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    items = parse_json(body).get("items", [])
+    return [{"title": f"{r['full_name']} ⭐{r.get('stargazers_count', 0)}",
+             "url": r["html_url"],
+             "snippet": (r.get("description") or "")[:300]} for r in items]
+
+
+def engine_juejin(ctx):
+    params = {"query": ctx["query"], "id_type": "0", "cursor": "0",
+              "limit": str(min(ctx["n"], 10))}
+    status, body = http_text("https://api.juejin.cn/search_api/v1/search?" + urllib.parse.urlencode(params),
+                             timeout=ctx["timeout"], headers={"accept": "application/json"})
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    d = parse_json(body)
+    if d.get("err_no") != 0:
+        raise RuntimeError(d.get("err_msg") or f"err_no {d.get('err_no')}")
+    out = []
+    for item in d.get("data") or []:
+        info = (item.get("result_model") or {}).get("article_info") or {}
+        if not info.get("title"):
+            continue
+        out.append({"title": info["title"],
+                    "url": f"https://juejin.cn/post/{item['result_model']['article_id']}",
+                    "snippet": (info.get("brief_content") or "")[:300]})
+        if len(out) >= ctx["n"]:
+            break
+    return out
+
+
+def engine_arxiv(ctx):
+    params = {"search_query": f"all:{ctx['query']}", "max_results": str(min(ctx["n"], 10))}
+    status, body = http_text("http://export.arxiv.org/api/query?" + urllib.parse.urlencode(params),
+                             timeout=ctx["timeout"])
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    out = []
+    for m in re.finditer(r"<entry>([\s\S]*?)</entry>", body):
+        entry = m.group(1)
+        tm = re.search(r"<title>([\s\S]*?)</title>", entry)
+        im = re.search(r"<id>([\s\S]*?)</id>", entry)
+        sm = re.search(r"<summary>([\s\S]*?)</summary>", entry)
+        title = strip_tags(tm.group(1)) if tm else ""
+        ident = (im.group(1) if im else "").strip()
+        if not title or not ident.startswith("http"):
+            continue
+        out.append({"title": title, "url": ident.replace("http://", "https://"),
+                    "snippet": (strip_tags(sm.group(1)) if sm else "")[:300]})
+    return out
+
+
+def engine_mwmbl(ctx):
+    status, body = http_text("https://api.mwmbl.org/api/v1/search/?s=" + urllib.parse.quote(ctx["query"]),
+                             timeout=ctx["timeout"], headers={"accept": "application/json"})
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    items = parse_json(body) or []
+    out = []
+    for r in items[: ctx["n"]]:
+        if not r.get("url"):
+            continue
+        title = "".join(f.get("value", "") for f in (r.get("title") or []))
+        extract = "".join(f.get("value", "") for f in (r.get("extract") or []))
+        out.append({"title": title or r["url"], "url": r["url"], "snippet": extract[:300]})
+    return out
+
+
 def engine_searxng(ctx):
     raw = os.environ.get("SEARXNG_BASE_URL")
     if not raw:
@@ -726,6 +849,13 @@ ENGINES = {
     "linkup": (engine_linkup, "LINKUP_API_KEY", frozenset()),
     "ollama": (engine_ollama, "OLLAMA_API_KEY", frozenset()),
     "searxng": (engine_searxng, "SEARXNG_BASE_URL", frozenset()),
+    "wikipedia": (engine_wikipedia, None, frozenset({"auto"})),
+    "stackexchange": (engine_stack_exchange, None, frozenset({"auto"})),
+    "github": (engine_github, None, frozenset({"auto"})),
+    "hn": (engine_hn, None, frozenset({"auto"})),
+    "juejin": (engine_juejin, None, frozenset({"auto"})),
+    "arxiv": (engine_arxiv, None, frozenset({"auto"})),
+    "mwmbl": (engine_mwmbl, None, frozenset({"auto"})),
     "baidu": (engine_baidu, None, frozenset()),
     "sogouweb": (engine_sogou_web, None, frozenset()),
     "so360": (engine_so360, None, frozenset()),
@@ -735,6 +865,25 @@ ENGINES = {
 }
 
 BACKUP_ENGINES_ENV = "EASY_WEB_SEARCH_ENGINES"
+
+
+def route_auto(query: str) -> list:
+    """Query-intent routing: auto tier engines join on strong signals only."""
+    add = []
+    q = query.lower()
+    if re.search(r"github|gitee|开源仓库|源码|repo\b|open[- ]?source", q):
+        add.append("github")
+    if re.search(r"stackoverflow|stack\s?exchange|报错|exception|traceback|怎么解决|how to (fix|debug)", q):
+        add.append("stackexchange")
+    if re.search(r"论文|文献|arxiv|学术|research paper|preprint", q):
+        add.append("arxiv")
+    if re.search(r"什么是|百科|维基百科|wikipedia|是谁|who is|history of", q):
+        add.append("wikipedia")
+    if re.search(r"hacker\s?news|show\s?hn|tech news|科技新闻", q):
+        add.append("hn")
+    if re.search(r"掘金|juejin|前端开发|javascript 教程|vue\b|react\b", q):
+        add.append("juejin")
+    return add
 
 
 def available_engines(filter_str, env):
@@ -851,6 +1000,12 @@ def main():
     names = [n for n, _ in engines]
     in_cooldown = [n for n in names if state.get(n, {}).get("until", 0) > now_ms]
     cooldown_skipped = []
+    if not args.engine:
+        for n in route_auto(ctx["query"]):
+            if n not in [e[0] for e in engines] and (n, ENGINES[n][0]) not in engines:
+                fn = ENGINES[n][0]
+                if (n, fn) not in engines:
+                    engines.append((n, fn))
     if not args.engine and in_cooldown and len(in_cooldown) < len(engines):
         for n in in_cooldown:
             cooldown_skipped.append({"name": n, "ok": False, "count": 0, "ms": 0,

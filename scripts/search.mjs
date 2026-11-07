@@ -709,6 +709,136 @@ function searxngBaseAndAuth(raw) {
   return { base: ui[1] + ui[3], authorization };
 }
 
+// ── Vertical engines (official keyless APIs) — auto-activated by query intent ──
+
+async function engineWikipedia(ctx) {
+  const cjk = /[\u4e00-\u9fa5]/.test(ctx.query);
+  const lang = ["zh", "en"].includes(ctx.lang) ? ctx.lang : cjk ? "zh" : "en";
+  const params = new URLSearchParams({
+    action: "query", list: "search", srsearch: ctx.query,
+    format: "json", srlimit: String(Math.min(ctx.n, 10)),
+  });
+  const { status, body } = await fetchText(`https://${lang}.wikipedia.org/w/api.php?${params}`, {
+    timeout: ctx.timeout, headers: { accept: "application/json" },
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const items = parseJson(body)?.query?.search || [];
+  return items.map((r) => ({
+    title: r.title,
+    url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(String(r.title).replace(/ /g, "_"))}`,
+    snippet: stripTags(r.snippet || ""),
+  }));
+}
+
+async function engineStackExchange(ctx) {
+  const params = new URLSearchParams({
+    intitle: ctx.query, site: "stackoverflow",
+    pagesize: String(Math.min(ctx.n, 10)),
+  });
+  const { status, body } = await fetchText(`https://api.stackexchange.com/2.3/search/excerpts?${params}`, {
+    timeout: ctx.timeout, headers: { accept: "application/json" },
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const items = parseJson(body)?.items || [];
+  return items
+    .filter((r) => r.question_id && r.title)
+    .map((r) => ({
+      title: stripTags(r.title),
+      url: `https://stackoverflow.com/q/${r.question_id}`,
+      snippet: stripTags(r.excerpt || "").slice(0, 300),
+    }));
+}
+
+async function engineHn(ctx) {
+  const params = new URLSearchParams({ query: ctx.query, hitsPerPage: String(Math.min(ctx.n, 10)) });
+  const { status, body } = await fetchText(`https://hn.algolia.com/api/v1/search?${params}`, {
+    timeout: ctx.timeout, headers: { accept: "application/json" },
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const hits = parseJson(body)?.hits || [];
+  return hits
+    .filter((r) => r.title)
+    .map((r) => ({
+      title: r.title,
+      url: r.url || `https://news.ycombinator.com/item?id=${r.objectID}`,
+      snippet: stripTags(r.story_text || r.comment_text || "").slice(0, 300),
+    }));
+}
+
+async function engineGithub(ctx) {
+  const params = new URLSearchParams({ q: ctx.query, per_page: String(Math.min(ctx.n, 10)) });
+  const { status, body } = await fetchText(`https://api.github.com/search/repositories?${params}`, {
+    timeout: ctx.timeout,
+    headers: { accept: "application/vnd.github+json" },
+  });
+  if (status === 403) throw new Error("GitHub rate limit (10 searches/min unauthenticated) — cooldown covers");
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const items = parseJson(body)?.items || [];
+  return items.map((r) => ({
+    title: `${r.full_name} ⭐${r.stargazers_count ?? 0}`,
+    url: r.html_url,
+    snippet: (r.description || "").slice(0, 300),
+  }));
+}
+
+async function engineJuejin(ctx) {
+  const params = new URLSearchParams({ query: ctx.query, id_type: "0", cursor: "0", limit: String(Math.min(ctx.n, 10)) });
+  const { status, body } = await fetchText(`https://api.juejin.cn/search_api/v1/search?${params}`, {
+    timeout: ctx.timeout, headers: { accept: "application/json" },
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const d = parseJson(body);
+  if (d.err_no !== 0) throw new Error(d.err_msg || `err_no ${d.err_no}`);
+  const out = [];
+  for (const item of d.data || []) {
+    const info = item.result_model?.article_info;
+    if (!info?.title) continue;
+    out.push({
+      title: info.title,
+      url: `https://juejin.cn/post/${item.result_model.article_id}`,
+      snippet: (info.brief_content || "").slice(0, 300),
+    });
+    if (out.length >= ctx.n) break;
+  }
+  return out;
+}
+
+async function engineArxiv(ctx) {
+  const params = new URLSearchParams({
+    search_query: `all:${ctx.query}`,
+    max_results: String(Math.min(ctx.n, 10)),
+  });
+  const { status, body } = await fetchText(`http://export.arxiv.org/api/query?${params}`, {
+    timeout: ctx.timeout,
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const out = [];
+  for (const m of body.matchAll(/<entry>([\s\S]*?)<\/entry>/g)) {
+    const entry = m[1];
+    const title = stripTags((entry.match(/<title>([\s\S]*?)<\/title>/) || [])[1] || "");
+    const id = (entry.match(/<id>([\s\S]*?)<\/id>/) || [])[1] || "";
+    const summary = stripTags((entry.match(/<summary>([\s\S]*?)<\/summary>/) || [])[1] || "");
+    if (!title || !id.startsWith("http")) continue;
+    out.push({ title, url: id.replace("http://", "https://"), snippet: summary.slice(0, 300) });
+  }
+  return out;
+}
+
+async function engineMwmbl(ctx) {
+  const { status, body } = await fetchText(`https://api.mwmbl.org/api/v1/search/?s=${encodeURIComponent(ctx.query)}`, {
+    timeout: ctx.timeout, headers: { accept: "application/json" },
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const items = parseJson(body) || [];
+  return items.slice(0, ctx.n)
+    .filter((r) => r.url)
+    .map((r) => ({
+      title: (r.title || []).map((f) => f.value).join("") || r.url,
+      url: r.url,
+      snippet: (r.extract || []).map((f) => f.value).join("").slice(0, 300),
+    }));
+}
+
 async function engineSearxng(ctx) {
   if (!process.env.SEARXNG_BASE_URL) {
     throw new Error("SEARXNG_BASE_URL not set — see README SearXNG section");
@@ -747,6 +877,14 @@ const ENGINES = {
   linkup: { fn: engineLinkup, key: "LINKUP_API_KEY" },
   ollama: { fn: engineOllama, key: "OLLAMA_API_KEY" },
   searxng: { fn: engineSearxng, key: "SEARXNG_BASE_URL" },
+  // ── Vertical engines (official keyless APIs) — auto tier ──
+  wikipedia: { fn: engineWikipedia, key: null, auto: true },
+  stackexchange: { fn: engineStackExchange, key: null, auto: true },
+  github: { fn: engineGithub, key: null, auto: true },
+  hn: { fn: engineHn, key: null, auto: true },
+  juejin: { fn: engineJuejin, key: null, auto: true },
+  arxiv: { fn: engineArxiv, key: null, auto: true },
+  mwmbl: { fn: engineMwmbl, key: null, auto: true },
   // Keyless backup engines: anonymous quotas are low, so they stay OFF by
   // default. Opt in via --engine or the EASY_WEB_SEARCH_ENGINES env var.
   anysearch: { fn: engineAnysearch, key: "ANYSEARCH_API_KEY", optionalKey: true, backup: true },
@@ -756,6 +894,20 @@ const ENGINES = {
 };
 
 const BACKUP_ENGINES_ENV = "EASY_WEB_SEARCH_ENGINES";
+
+// Query-intent routing: auto tier engines join on strong signals only.
+// Conservative patterns — false positives burn quota (github/stackexchange).
+function routeAuto(query) {
+  const add = [];
+  const q = query.toLowerCase();
+  if (/(github|gitee|开源仓库|源码|repo\b|open[- ]?source)/.test(q)) add.push("github");
+  if (/(stackoverflow|stack\s?exchange|报错|exception|traceback|怎么解决|how to (fix|debug))/.test(q)) add.push("stackexchange");
+  if (/(论文|文献|arxiv|学术|research paper|preprint)/.test(q)) add.push("arxiv");
+  if (/(什么是|百科|维基百科|wikipedia|是谁|who is|history of)/.test(q)) add.push("wikipedia");
+  if (/(hacker\s?news|show\s?hn|tech news|科技新闻)/.test(q)) add.push("hn");
+  if (/(掘金|juejin|前端开发|javascript 教程|vue\b|react\b)/.test(q)) add.push("juejin");
+  return add;
+}
 
 function availableEngines(filter) {
   if (filter) {
@@ -846,6 +998,13 @@ async function main() {
   if (engines.length === 0) {
     console.error("No search engines available (baseline ddg/bing need network; keyed engines need their env vars).\nValid engines: " + Object.keys(ENGINES).join(", "));
     process.exit(2);
+  }
+  // Query-intent routing: auto tier joins only on strong signals (default
+  // selection only; explicit --engine overrides the whole list anyway).
+  if (!args.engines) {
+    for (const n of routeAuto(ctx.query)) {
+      if (!engines.includes(n)) engines.push(n);
+    }
   }
 
   // Skip engines in active cooldown (default selection only; explicit
