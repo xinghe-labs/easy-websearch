@@ -146,7 +146,24 @@ async function run() {
     }
   } catch { /* direct fetch failed (blocked/timeout/empty) → reader fallback */ }
 
-  // 2) r.jina.ai reader fallback (free, no key; rate-limited).
+  // 2) Firecrawl scrape (when FIRECRAWL_API_KEY is set) — higher quality
+  //    extraction than the reader fallback, uses the key's quota.
+  if (process.env.FIRECRAWL_API_KEY) {
+    try {
+      const { status, body } = await fetchText("https://api.firecrawl.dev/v1/scrape", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${process.env.FIRECRAWL_API_KEY}` },
+        body: JSON.stringify({ url, formats: ["markdown"] }),
+        timeout: flags.timeout,
+      });
+      const res = JSON.parse(body);
+      if (status === 200 && res.success !== false && res.data?.markdown && res.data.markdown.length > 100) {
+        return { ok: true, via: "firecrawl", url, chars: res.data.markdown.length, content: res.data.markdown.slice(0, flags.maxChars) };
+      }
+    } catch { /* firecrawl unavailable — fall through to reader */ }
+  }
+
+  // 3) r.jina.ai reader fallback (free, no key; rate-limited).
   try {
     const { status, body } = await fetchText(`https://r.jina.ai/${url}`, {
       headers: { accept: "text/plain" }, timeout: flags.timeout,
@@ -154,7 +171,7 @@ async function run() {
     if (status === 200 && body && body.trim().length > 100) {
       return { ok: true, via: "r.jina.ai", url, chars: body.length, content: body.slice(0, flags.maxChars) };
     }
-    return { ok: false, url, error: `direct extraction failed; reader fallback HTTP ${status}` };
+    return { ok: false, url, error: `direct + firecrawl extraction failed; reader fallback HTTP ${status}` };
   } catch (e) {
     // Both paths failed — report structured failure instead of crashing.
     return { ok: false, url, error: `direct extraction failed; reader fallback: ${e.message}` };

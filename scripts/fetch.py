@@ -16,6 +16,7 @@ Always exits 0 with --json and reports {"ok": false} instead of crashing.
 import argparse
 import html
 import json
+import os
 import re
 import sys
 import urllib.error
@@ -51,6 +52,14 @@ def http_text(url: str, headers: dict | None = None,
 
 def strip_tags(s: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]*>", "", s or ""))).strip()
+
+
+def _parse_json(body: str) -> dict:
+    """json.loads with a structured error (callers isolate fallback steps)."""
+    try:
+        return json.loads(body)
+    except ValueError as e:
+        raise RuntimeError(f"invalid JSON response: {e}") from e
 
 
 _ENTITIES = {"mdash": "—", "ldquo": "“", "rdquo": "”", "lsquo": "‘",
@@ -112,14 +121,34 @@ def extract(url: str, timeout: float, max_chars: int) -> dict:
     except (RuntimeError, urllib.error.URLError, OSError) as e:
         direct_error = f"{type(e).__name__}: {e}"  # fall through to reader fallback
 
-    # 2) r.jina.ai reader fallback (free, no key; rate-limited).
+    # 2) Firecrawl scrape (when FIRECRAWL_API_KEY is set) — higher quality
+    #    extraction than the reader fallback, uses the key's quota.
+    firecrawl_error = ""
+    firecrawl_key = os.environ.get("FIRECRAWL_API_KEY")
+    if firecrawl_key:
+        try:
+            status, body, _ = http_text(
+                "https://api.firecrawl.dev/v1/scrape",
+                headers={"content-type": "application/json",
+                         "authorization": f"Bearer {firecrawl_key}"},
+                timeout=timeout)
+            res = _parse_json(body)
+            md = ((res.get("data") or {}).get("markdown") or "") if isinstance(res, dict) else ""
+            if status == 200 and res.get("success") is not False and len(md) > 100:
+                return {"ok": True, "via": "firecrawl", "url": url,
+                        "chars": len(md), "content": md[:max_chars]}
+        except (RuntimeError, urllib.error.URLError, OSError, ValueError) as e:
+            firecrawl_error = f"{type(e).__name__}: {e}"  # unavailable → reader fallback
+
+    # 3) r.jina.ai reader fallback (free, no key; rate-limited).
     status, body, _ = http_text(f"https://r.jina.ai/{url}",
                                 headers={"accept": "text/plain"}, timeout=timeout)
     if status == 200 and body.strip() and len(body.strip()) > 100:
         return {"ok": True, "via": "r.jina.ai", "url": url,
                 "chars": len(body), "content": body[:max_chars]}
     return {"ok": False, "url": url,
-            "error": (f"direct extraction failed ({direct_error or 'empty/short content'}); "
+            "error": (f"direct + firecrawl extraction failed "
+                      f"({direct_error or 'empty/short content'}; {firecrawl_error or 'not configured/empty'}); "
                       f"reader fallback HTTP {status}")}
 
 
