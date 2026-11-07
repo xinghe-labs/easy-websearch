@@ -970,17 +970,17 @@ const ENGINES = {
   ollama: { fn: engineOllama, key: "OLLAMA_API_KEY" },
   searxng: { fn: engineSearxng, key: "SEARXNG_BASE_URL" },
   // ── Vertical engines (official keyless APIs) — auto tier ──
-  wikipedia: { fn: engineWikipedia, key: null, auto: true },
+  wikipedia: { fn: engineWikipedia, key: null },
   stackexchange: { fn: engineStackExchange, key: null, auto: true },
   github: { fn: engineGithub, key: null, auto: true },
-  hn: { fn: engineHn, key: null, auto: true },
-  juejin: { fn: engineJuejin, key: null, auto: true },
-  arxiv: { fn: engineArxiv, key: null, auto: true },
-  mwmbl: { fn: engineMwmbl, key: null, auto: true },
+  hn: { fn: engineHn, key: null },
+  juejin: { fn: engineJuejin, key: null },
+  arxiv: { fn: engineArxiv, key: null },
+  mwmbl: { fn: engineMwmbl, key: null },
   // ── Academic / registry (official keyless APIs) — auto tier ──
   csdn: { fn: engineCSDN, key: null, auto: true },
   openalex: { fn: engineOpenAlex, key: null, auto: true },
-  crossref: { fn: engineCrossref, key: null, auto: true },
+  crossref: { fn: engineCrossref, key: null },
   pubmed: { fn: enginePubMed, key: null, auto: true },
   huggingface: { fn: engineHuggingFace, key: null, auto: true },
   // Keyless backup engines: anonymous quotas are low, so they stay OFF by
