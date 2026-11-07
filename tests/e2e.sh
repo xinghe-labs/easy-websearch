@@ -50,8 +50,23 @@ if (!d.engines.some(e => e.ok)) process.exit(1);"; check "multi-engine at least 
 # --- backup engines: excluded by default, opt-in works ---
 node scripts/search.mjs "webgpu" -n 1 --json 2>/dev/null | json "
 const names = d.engines.map(e => e.name);
-if (names.includes('anysearch') || names.includes('keenable')) process.exit(1);"
+if (names.includes('anysearch') || names.includes('keenable') || names.includes('sogouweixin')) process.exit(1);"
 check "backups excluded from default set" $?
+
+# --- baidu in default pool; searxng hidden without env ---
+node scripts/search.mjs "webgpu" -n 1 --json 2>/dev/null | json "
+const names = d.engines.map(e => e.name);
+if (!names.includes('baidu') || names.includes('searxng')) process.exit(1);"
+check "baidu in default set, searxng hidden" $?
+
+SEARXNG_BASE_URL=http://127.0.0.1:9 node scripts/search.mjs "test" -n 1 --json 2>/dev/null | json "
+const s = d.engines.find(e => e.name === 'searxng');
+if (!s || s.ok !== false) process.exit(1);"
+check "searxng activates with env (fails soft on bad URL)" $?
+
+# --- doctor BYOK hints ---
+node scripts/doctor.mjs 2>/dev/null | grep -q 'BRAVE_API_KEY not set — get it: brave.com/search/api'
+check "doctor SKIP rows show key signup links" $?
 
 EASY_WEB_SEARCH_ENGINES=keenable node scripts/search.mjs "webgpu" -n 1 --json 2>/dev/null | json "
 if (!d.engines.map(e => e.name).includes('keenable')) process.exit(1);"
