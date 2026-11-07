@@ -96,6 +96,8 @@ key 放进 agent 的环境变量（如 Claude Code 的 `~/.claude/settings.json`
 
 ## 自建 SearXNG（无配额、无 key）
 
+完整部署指南（docker-compose、settings.yml、网络注意事项）：[`docs/searxng-setup.md`](docs/searxng-setup.md)。
+
 如果你自己跑 [SearXNG](https://docs.searxng.org/)（docker 一行：
 `docker run -p 8080:8080 searxng/searxng`），把 skill 指向它：
 

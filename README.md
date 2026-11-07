@@ -95,6 +95,8 @@ Then `node scripts/doctor.mjs` — each missing key now prints where to get it.
 
 ## Self-hosted SearXNG (unlimited, no keys)
 
+Full deployment guide (docker-compose, settings.yml, network gotchas): [`docs/searxng-setup.md`](docs/searxng-setup.md).
+
 If you run [SearXNG](https://docs.searxng.org/) yourself (docker one-liner:
 `docker run -p 8080:8080 searxng/searxng`), point the skill at it:
 
