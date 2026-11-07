@@ -99,6 +99,18 @@ localhost:
   servers — the skill's built-in `baidu`/`bing` engines already cover CN
   networks without any proxy.
 
+## 3.2 NAT VPS (shared IPv4 / no dedicated ports)
+
+SearXNG itself runs fine on NAT machines (outbound scraping is unaffected).
+Only inbound reachability changes — pick one:
+
+| Option | Effort | Notes |
+|---|---|---|
+| SSH tunnel | zero setup | `ssh -L 8080:127.0.0.1:8080 <server>`, then `SEARXNG_BASE_URL=http://localhost:8080`. Tunnel must be up while searching. Bind SearXNG to 127.0.0.1 only. |
+| Tailscale / ZeroTail | one-time install on both ends | fixed 100.x IP, no ports exposed, works behind any NAT. `SEARXNG_BASE_URL=http://<tailscale-ip>:8080`. Most secure. |
+| Cloudflare Tunnel | one-time setup | outbound-only, free https domain, optional Cloudflare Access policies. CN reachability of the domain varies. |
+| NAT forwarded port | if the vendor maps ports | publish e.g. `10005:8080`, use `http://<shared-ip>:10005`. Add basic auth (shared IP = shared abuse risk; upstream engines may rate-limit the shared IP). |
+
 ## 4. Network notes (common gotchas)
 
 - **Local instance + `HTTPS_PROXY`**: the skill's Node runtime only proxies
