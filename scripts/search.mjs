@@ -11,6 +11,9 @@
  * Engines (baseline, no key): ddg, bing
  * Engines (enabled when env key present): brave (BRAVE_API_KEY),
  *   tavily (TAVILY_API_KEY), serper (SERPER_API_KEY), exa (EXA_API_KEY)
+ * Backup engines (keyless, low anonymous quota — off by default; opt in via
+ *   --engine or EASY_WEB_SEARCH_ENGINES=anysearch,keenable):
+ *   anysearch (ANYSEARCH_API_KEY optional), keenable (KEENABLE_API_KEY optional)
  *
  * Reliability-first: each engine runs independently with its own timeout;
  * failures never abort the run. Output reports per-engine status.
@@ -278,6 +281,42 @@ async function engineExa(ctx) {
   return items.map((r) => ({ title: r.title || r.url, url: r.url, snippet: (r.text || r.summary || "").slice(0, 400) }));
 }
 
+async function engineAnysearch(ctx) {
+  const payload = { query: ctx.query, max_results: Math.min(ctx.n, 20) };
+  const headers = { "content-type": "application/json" };
+  // Key optional — anonymous access works with lower rate limits.
+  if (process.env.ANYSEARCH_API_KEY) headers["authorization"] = `Bearer ${process.env.ANYSEARCH_API_KEY}`;
+  const { status, body } = await fetchText("https://api.anysearch.com/v1/search", {
+    method: "POST", headers, body: JSON.stringify(payload), timeout: ctx.timeout,
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const res = JSON.parse(body);
+  if (res.code !== 0) throw new Error(res.message || `code ${res.code}`);
+  const items = res.data?.results || [];
+  return items.map((r) => ({ title: r.title || r.url, url: r.url, snippet: (r.snippet || "").slice(0, 400) }));
+}
+
+async function engineKeenable(ctx) {
+  const keyed = !!process.env.KEENABLE_API_KEY;
+  const path = keyed ? "/v1/search" : "/v1/search/public";
+  const payload = {
+    query: ctx.query,
+    max_results: Math.min(Math.max(ctx.n, 1), 50),
+    snippet_max_length: 400,
+  };
+  const headers = { "content-type": "application/json" };
+  if (keyed) headers["x-api-key"] = process.env.KEENABLE_API_KEY;
+  else headers["x-keenable-title"] = "easy-web-search"; // required for keyless
+  const { status, body } = await fetchText(`https://api.keenable.ai${path}`, {
+    method: "POST", headers, body: JSON.stringify(payload), timeout: ctx.timeout,
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const items = JSON.parse(body)?.results || [];
+  return items
+    .filter((r) => r.url && !r.url.startsWith("https://cards.keenable.ai/")) // ephemeral cards
+    .map((r) => ({ title: r.title, url: r.url, snippet: (r.snippet || "").slice(0, 400) }));
+}
+
 const ENGINES = {
   ddg: engineDDG,
   bing: engineBing,
@@ -285,18 +324,35 @@ const ENGINES = {
   tavily: { fn: engineTavily, key: "TAVILY_API_KEY" },
   serper: { fn: engineSerper, key: "SERPER_API_KEY" },
   exa: { fn: engineExa, key: "EXA_API_KEY" },
+  // Keyless backup engines: anonymous quotas are low, so they stay OFF by
+  // default. Opt in via --engine or the EASY_WEB_SEARCH_ENGINES env var.
+  anysearch: { fn: engineAnysearch, key: "ANYSEARCH_API_KEY", optionalKey: true, backup: true },
+  keenable: { fn: engineKeenable, key: "KEENABLE_API_KEY", optionalKey: true, backup: true },
 };
 
+const BACKUP_ENGINES_ENV = "EASY_WEB_SEARCH_ENGINES";
+
 function availableEngines(filter) {
-  const names = filter
-    ? filter.split(",").map((s) => s.trim()).filter(Boolean)
-    : Object.keys(ENGINES);
-  return names.filter((name) => {
+  if (filter) {
+    return filter.split(",").map((s) => s.trim()).filter((name) => !!ENGINES[name]);
+  }
+  const isAvailable = (name) => {
     const e = ENGINES[name];
     if (!e) return false;
     if (typeof e === "function") return true; // baseline
-    return !!process.env[e.key];
+    if (e.key && !process.env[e.key] && !e.optionalKey) return false; // keyed, no key
+    return true;
+  };
+  const engines = Object.keys(ENGINES).filter((name) => {
+    const e = ENGINES[name];
+    if (typeof e !== "object" || !e.backup) return isAvailable(name);
+    return false; // backups excluded from the default set
   });
+  // Opt-in backups via env (comma-separated), e.g. EASY_WEB_SEARCH_ENGINES=anysearch,keenable
+  const optIn = (process.env[BACKUP_ENGINES_ENV] || "")
+    .split(",").map((s) => s.trim()).filter((name) => ENGINES[name] && ENGINES[name].backup);
+  for (const name of optIn) if (!engines.includes(name)) engines.push(name);
+  return engines.filter(isAvailable);
 }
 
 // -------------------------------------------------------------- fusion ----

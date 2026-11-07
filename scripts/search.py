@@ -12,6 +12,9 @@ Usage:
 Engines (baseline, no key): ddg, bing
 Engines (enabled when env key present): brave (BRAVE_API_KEY),
   tavily (TAVILY_API_KEY), serper (SERPER_API_KEY), exa (EXA_API_KEY)
+Backup engines (keyless, low anonymous quota — off by default; opt in via
+  --engine or EASY_WEB_SEARCH_ENGINES=anysearch,keenable):
+  anysearch (ANYSEARCH_API_KEY optional), keenable (KEENABLE_API_KEY optional)
 
 Reliability-first: each engine runs independently with its own timeout;
 failures never abort the run. Output reports per-engine status.
@@ -221,25 +224,83 @@ def engine_exa(ctx):
              "snippet": (r.get("text") or r.get("summary") or "")[:400]} for r in items]
 
 
+def engine_anysearch(ctx):
+    payload = {"query": ctx["query"], "max_results": min(ctx["n"], 20)}
+    headers = {"content-type": "application/json"}
+    # Key optional — anonymous access works with lower rate limits.
+    if ctx["env"].get("ANYSEARCH_API_KEY"):
+        headers["authorization"] = f"Bearer {ctx['env']['ANYSEARCH_API_KEY']}"
+    status, body = http_text("https://api.anysearch.com/v1/search", method="POST",
+                             data=json.dumps(payload).encode(), headers=headers,
+                             timeout=ctx["timeout"])
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    res = parse_json(body)
+    if res.get("code") != 0:
+        raise RuntimeError(res.get("message") or f"code {res.get('code')}")
+    items = (res.get("data") or {}).get("results", [])
+    return [{"title": r.get("title") or r.get("url", ""), "url": r["url"],
+             "snippet": (r.get("snippet") or "")[:400]} for r in items if r.get("url")]
+
+
+def engine_keenable(ctx):
+    keyed = bool(ctx["env"].get("KEENABLE_API_KEY"))
+    path = "/v1/search" if keyed else "/v1/search/public"
+    payload = {"query": ctx["query"], "max_results": min(max(ctx["n"], 1), 50),
+               "snippet_max_length": 400}
+    headers = {"content-type": "application/json"}
+    if keyed:
+        headers["x-api-key"] = ctx["env"]["KEENABLE_API_KEY"]
+    else:
+        headers["x-keenable-title"] = "easy-web-search"  # required for keyless
+    status, body = http_text(f"https://api.keenable.ai{path}", method="POST",
+                             data=json.dumps(payload).encode(), headers=headers,
+                             timeout=ctx["timeout"])
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    items = parse_json(body).get("results", [])
+    # cards.keenable.ai URLs are ephemeral (valid one day) — drop them
+    return [{"title": r.get("title", ""), "url": r["url"],
+             "snippet": (r.get("snippet") or "")[:400]}
+            for r in items
+            if r.get("url") and not r["url"].startswith("https://cards.keenable.ai/")]
+
+
+# (name, engine_fn, env_key, flags): baseline engines run by default; keyed
+# engines join when their key exists; backup engines also need an explicit
+# opt-in (--engine or EASY_WEB_SEARCH_ENGINES) because anonymous quotas are low.
 ENGINES = {
-    "ddg": (engine_ddg, None),
-    "bing": (engine_bing, None),
-    "brave": (engine_brave, "BRAVE_API_KEY"),
-    "tavily": (engine_tavily, "TAVILY_API_KEY"),
-    "serper": (engine_serper, "SERPER_API_KEY"),
-    "exa": (engine_exa, "EXA_API_KEY"),
+    "ddg": (engine_ddg, None, frozenset()),
+    "bing": (engine_bing, None, frozenset()),
+    "brave": (engine_brave, "BRAVE_API_KEY", frozenset()),
+    "tavily": (engine_tavily, "TAVILY_API_KEY", frozenset()),
+    "serper": (engine_serper, "SERPER_API_KEY", frozenset()),
+    "exa": (engine_exa, "EXA_API_KEY", frozenset()),
+    "anysearch": (engine_anysearch, "ANYSEARCH_API_KEY", frozenset({"optional_key", "backup"})),
+    "keenable": (engine_keenable, "KEENABLE_API_KEY", frozenset({"optional_key", "backup"})),
 }
+
+BACKUP_ENGINES_ENV = "EASY_WEB_SEARCH_ENGINES"
 
 
 def available_engines(filter_str, env):
-    names = [s.strip() for s in filter_str.split(",") if s.strip()] if filter_str else list(ENGINES)
-    out = []
-    for name in names:
-        if name in ENGINES:
-            fn, key = ENGINES[name]
-            if key is None or env.get(key):
-                out.append((name, fn))
-    return out
+    if filter_str:
+        names = [s.strip() for s in filter_str.split(",") if s.strip()]
+        return [(n, ENGINES[n][0]) for n in names if n in ENGINES]
+
+    def usable(name):
+        _, key, flags = ENGINES[name]
+        return key is None or env.get(key) or "optional_key" in flags
+
+    engines = [name for name in ENGINES
+               if "backup" not in ENGINES[name][2] and usable(name)]
+    # Opt-in backups via env (comma-separated), e.g. EASY_WEB_SEARCH_ENGINES=anysearch,keenable
+    opt_in = [s.strip() for s in os.environ.get(BACKUP_ENGINES_ENV, "").split(",")
+              if s.strip() in ENGINES and "backup" in ENGINES[s.strip()][2]]
+    for name in opt_in:
+        if name not in engines:
+            engines.append(name)
+    return [(name, ENGINES[name][0]) for name in engines if usable(name)]
 
 
 # ---------------------------------------------------------------- fusion ----
