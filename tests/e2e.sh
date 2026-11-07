@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E2E test matrix for fusion-search. Network-dependent; run manually or in CI.
+# E2E test matrix for easy-web-search. Network-dependent; run manually or in CI.
 set -u
 PASS=0; FAIL=0
 check() { # check <name> <exit_code>

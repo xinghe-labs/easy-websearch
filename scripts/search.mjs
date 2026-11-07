@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * fusion-search — multi-engine web search with RRF fusion and graceful degradation.
+ * easy-web-search — multi-engine web search with RRF fusion and graceful degradation.
  * Zero npm dependencies. Node >= 18.
  *
  * Usage:

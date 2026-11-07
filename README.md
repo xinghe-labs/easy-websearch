@@ -1,4 +1,4 @@
-# fusion-search
+# easy-web-search
 
 Multi-engine web search + page reader for AI coding agents — as a single
 [Agent Skills](https://agentskills.io)-compatible skill folder.
@@ -17,9 +17,9 @@ query ──► [ ddg ] [ bing ] [ brave ] [ tavily ] [ serper ] [ exa ]
             ranked results, engine attribution, JSON output
 ```
 
-## Why fusion-search
+## Why easy-web-search
 
-| | built-in web tools | single-engine skills | **fusion-search** |
+| | built-in web tools | single-engine skills | **easy-web-search** |
 |---|---|---|---|
 | Works with no API key | agent-dependent | often not | ✅ DDG + Bing baseline |
 | Survives engine blocks/rate limits | n/a | ❌ single point of failure | ✅ failover + fusion |
@@ -36,16 +36,16 @@ Copy or clone this folder into your skills directory:
 
 ```bash
 # user-level
-git clone https://github.com/<you>/fusion-search ~/.claude/skills/fusion-search
+git clone https://github.com/<you>/easy-web-search ~/.claude/skills/easy-web-search
 
 # or project-level
-git clone https://github.com/<you>/fusion-search .claude/skills/fusion-search
+git clone https://github.com/<you>/easy-web-search .claude/skills/easy-web-search
 ```
 
 With the [skills CLI](https://skills.sh):
 
 ```bash
-npx skills add <you>/fusion-search
+npx skills add <you>/easy-web-search
 ```
 
 ### Optional engine keys

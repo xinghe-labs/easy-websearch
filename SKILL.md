@@ -1,5 +1,5 @@
 ---
-name: fusion-search
+name: easy-web-search
 description: |
   Multi-engine web search with reliability-first failover and Chinese source
   optimization. Zero-config: works without any API key (DuckDuckGo + Bing),
@@ -14,7 +14,7 @@ description: |
   Runs offline via bundled zero-dependency scripts (Node or Python).
 ---
 
-# fusion-search
+# easy-web-search
 
 Multi-engine web search + page reader as a self-contained script tool.
 Free without API keys; better with them.
