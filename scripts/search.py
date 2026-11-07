@@ -697,7 +697,8 @@ def fuse(engine_results):
 # would likely fail again and burn the request budget). Explicit --engine
 # and --no-cooldown bypass the skip. State persists across invocations in
 # the user's cache dir; IO failures degrade silently to no cooldown.
-COOLDOWN_MS = 10 * 60 * 1000
+COOLDOWN_MS_FIRST = 2 * 60 * 1000  # transient network blips recover fast
+COOLDOWN_MS_MAX = 10 * 60 * 1000   # repeat offenders stay longer
 
 
 def _cooldown_path() -> str:
@@ -799,9 +800,12 @@ def main():
             if s["name"] in state:
                 del state[s["name"]]
                 dirty = True
-        elif state.get(s["name"], {}).get("until", 0) < now_ms + COOLDOWN_MS:
-            state[s["name"]] = {"until": now_ms + COOLDOWN_MS,
-                                "reason": s["error"][:120]}
+        elif state.get(s["name"], {}).get("until", 0) < now_ms + COOLDOWN_MS_MAX:
+            # Escalating cooldown: first failure 2 min (transient blips), repeats 10 min.
+            failures = int(state.get(s["name"], {}).get("failures", 0)) + 1
+            ms = COOLDOWN_MS_FIRST if failures == 1 else COOLDOWN_MS_MAX
+            state[s["name"]] = {"until": now_ms + ms,
+                                "reason": s["error"][:120], "failures": failures}
             dirty = True
     if dirty and not args.no_cooldown:
         _save_cooldowns(state)

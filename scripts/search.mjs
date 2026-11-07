@@ -727,7 +727,8 @@ function fuse(engineResults) {
 // would likely fail again and burn the request budget). Explicit --engine
 // and --no-cooldown bypass the skip. State persists across invocations in
 // the user's cache dir; IO failures degrade silently to no cooldown.
-const COOLDOWN_MS = 10 * 60 * 1000;
+const COOLDOWN_MS_FIRST = 2 * 60 * 1000;  // transient network blips recover fast
+const COOLDOWN_MS_MAX = 10 * 60 * 1000;   // repeat offenders stay longer
 
 function cooldownPath() {
   const base = process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache");
@@ -803,8 +804,11 @@ async function main() {
   for (const s of statuses) {
     if (s.ok) {
       if (state[s.name]) { delete state[s.name]; dirty = true; }
-    } else if ((state[s.name]?.until ?? 0) < Date.now() + COOLDOWN_MS) {
-      state[s.name] = { until: Date.now() + COOLDOWN_MS, reason: s.error.slice(0, 120) };
+    } else if ((state[s.name]?.until ?? 0) < Date.now() + COOLDOWN_MS_MAX) {
+      // Escalating cooldown: first failure 2 min (transient blips), repeats 10 min.
+      const failures = (state[s.name]?.failures || 0) + 1;
+      const ms = failures === 1 ? COOLDOWN_MS_FIRST : COOLDOWN_MS_MAX;
+      state[s.name] = { until: Date.now() + ms, reason: s.error.slice(0, 120), failures };
       dirty = true;
     }
   }
