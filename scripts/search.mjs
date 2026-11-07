@@ -69,7 +69,7 @@ function proxyConnect(proxyUrl, host, port) {
   });
 }
 
-function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_TIMEOUT } = {}) {
+function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_TIMEOUT } = {}, depth = 0) {
   const u = new URL(url);
   const isHttps = u.protocol === "https:";
   const proxy =
@@ -107,6 +107,17 @@ function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_
       req.end();
     }
     function handler(res) {
+      // Follow up to 3 redirects — Bing (and others) 302-redirect on direct
+      // (non-proxied) connections, e.g. to regional hosts.
+      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && depth < 3) {
+        res.resume();
+        const next = new URL(res.headers.location, url).toString();
+        fetchText(next, { method, headers, body, timeout }, depth + 1).then(
+          (v) => finish(resolve, v),
+          (e) => finish(reject, e)
+        );
+        return;
+      }
       const chunks = [];
       res.on("data", (c) => chunks.push(c));
       res.on("end", () => finish(resolve, { status: res.statusCode, body: Buffer.concat(chunks).toString("utf8") }));
@@ -115,7 +126,7 @@ function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_
 }
 
 // ------------------------------------------------------------ helpers ----
-const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", "#39": "'", "#x27": "'" };
+const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ensp: " ", emsp: " ", thinsp: " ", zwnj: "", zwj: "", middot: "·", mdash: "—", ndash: "–", hellip: "…", ldquo: "“", rdquo: "”", lsquo: "‘", rsquo: "’", copy: "©", "#39": "'", "#x27": "'" };
 function decodeEntities(s) {
   return s.replace(/&(#x?[0-9a-fA-F]+|[a-z]+);/g, (m, e) => {
     if (ENTITIES[e]) return ENTITIES[e];
