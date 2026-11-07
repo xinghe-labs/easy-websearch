@@ -46,7 +46,8 @@ def main() -> None:
     env = {k: os.environ[k] for k in
            ("BRAVE_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY", "EXA_API_KEY",
             "FIRECRAWL_API_KEY", "BOCHA_API_KEY", "METASO_API_KEY", "LINKUP_API_KEY",
-            "OLLAMA_API_KEY", "ANYSEARCH_API_KEY", "KEENABLE_API_KEY")
+            "OLLAMA_API_KEY", "ANYSEARCH_API_KEY", "KEENABLE_API_KEY",
+            "SEARXNG_BASE_URL", "EASY_WEB_SEARCH_ENGINES")
            if os.environ.get(k)}
     default_set = {name for name, _ in available_engines("", env)}
     opt_in = [s.strip() for s in os.environ.get("EASY_WEB_SEARCH_ENGINES", "").split(",")
