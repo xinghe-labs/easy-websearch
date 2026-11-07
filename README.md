@@ -2,6 +2,12 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
+[![engine-probe](https://github.com/xinghe-labs/easy-websearch/actions/workflows/engine-probe.yml/badge.svg)](https://github.com/xinghe-labs/easy-websearch/actions/workflows/engine-probe.yml)
+[![Release](https://img.shields.io/github/v/release/xinghe-labs/easy-websearch)](https://github.com/xinghe-labs/easy-websearch/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-2F9E4F.svg)](LICENSE)
+![Node](https://img.shields.io/badge/Node-%E2%89%A518-3C873A)
+![Python](https://img.shields.io/badge/Python-%E2%89%A53.11-3776AB)
+
 Multi-engine web search + page reader for AI coding agents — as a single
 [Agent Skills](https://agentskills.io)-compatible skill folder.
 
