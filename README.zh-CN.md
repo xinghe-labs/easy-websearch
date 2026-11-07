@@ -63,7 +63,7 @@ easy-websearch search "大模型 本地部署" --lang zh -n 5
 ## 为什么选 easy-web-search
 
 | | agent 内置搜索 | 单引擎类 skill | **easy-web-search** |
-| --- | --- | --- | --- | 
+| --- | --- | --- | --- |
 | 无 API key 可用 | 看 agent 脸色 | 通常不行 | ✅ DDG + Bing + 百度基线 |
 | 引擎被反爬/限流时 | 不可控 | ❌ 单点故障 | ✅ 自动降级 + 多源融合 + 冷却 |
 | 中文信息源 | 不稳定 | 很少调优 | ✅ `cn-zh` / `zh-CN` 区域调优，百度 + CSDN/知乎/掘金可达 |
@@ -109,7 +109,7 @@ easy-websearch doctor
 所有 key 都可选。配一个，对应引擎自动加入搜索池。按性价比排序：
 
 | 顺序 | 引擎 | 带来什么 | 免费额度 | 注册直达 | 环境变量 |
-| --- | --- | --- | --- | --- | --- | 
+| --- | --- | --- | --- | --- | --- |
 | 1 | **Brave** | 稳定的国际搜索 | 2,000 次/月 | [brave.com/search/api](https://brave.com/search/api/) → Free 计划 | `BRAVE_API_KEY` |
 | 2 | **Tavily** | LLM 友好摘要 | 1,000 次/月 | [app.tavily.com](https://app.tavily.com/) | `TAVILY_API_KEY` |
 | 3 | **Ollama** | 多一个稳定源 | 免费账号 | [ollama.com](https://ollama.com/) → Account → API keys | `OLLAMA_API_KEY` |
@@ -145,12 +145,14 @@ export SEARXNG_BASE_URL=http://localhost:8080   # 或 https://searx.example.com
 `searxng` 引擎自动加入。实例侧两个要求：
 
 1. **开启 JSON 格式** —— 在 `settings.yml`：
+
    ```yaml
    search:
      formats:
        - html
        - json
    ```
+
    （缺了的话，doctor/搜索会提示：`SearXNG rejected JSON — add
    'json' to search.formats in settings.yml`。）
 2. **可达性** —— skill 会遵守 `HTTPS_PROXY`；本地实例应直连可达。
