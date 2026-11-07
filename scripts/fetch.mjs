@@ -173,7 +173,7 @@ async function run() {
     if (status === 200 && body && body.trim().length > 100) {
       return { ok: true, via: "r.jina.ai", url, chars: body.length, content: body.slice(0, flags.maxChars) };
     }
-    return { ok: false, url, error: `direct + firecrawl extraction failed; reader fallback HTTP ${status} (note: fetch targets HTML pages — read JSON/text endpoints directly)` };
+    return { ok: false, url, error: `direct + firecrawl extraction failed; reader fallback HTTP ${status} — the target site may have rejected the reader too (note: fetch targets HTML pages — read JSON/text endpoints directly)` };
   } catch (e) {
     // Both paths failed — report structured failure instead of crashing.
     return { ok: false, url, error: `direct extraction failed; reader fallback: ${e.message} (note: fetch targets HTML pages — read JSON/text endpoints directly)` };
