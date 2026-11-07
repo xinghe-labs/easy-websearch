@@ -13,7 +13,7 @@ $1
 
 # --- search: node, english ---
 node scripts/search.mjs "rust async runtime" -n 3 >/tmp/t1.out 2>/tmp/t1.err; check "node search EN" $?
-grep -q "engines:" /tmp/t1.err; check "node search prints engine status" $?
+grep -q "engines:" /tmp/t1.out; check "node search prints engine status (stdout)" $?
 
 # --- search: chinese sources ---
 node scripts/search.mjs "机器学习 入门" -n 3 --lang zh >/tmp/t2.out 2>/dev/null; check "search ZH" $?
@@ -100,6 +100,40 @@ const m = d.engines.find(e => e.name === 'metaso');
 if (!m || m.error.startsWith('skipped')) process.exit(1);"
 check "--no-cooldown bypasses cooldown" $?
 unset XDG_CACHE_HOME
+
+# --- P0-1: --help and flag validation ---
+node scripts/search.mjs --help >/tmp/h.out 2>&1; rc=$?
+[ $rc -eq 0 ] && grep -q "Usage:" /tmp/h.out; check "--help exits 0 with usage" $?
+node scripts/search.mjs "test" --lanng zh >/dev/null 2>&1; [ $? -eq 2 ]; check "unknown flag exits 2" $?
+node scripts/search.mjs "test" --site >/dev/null 2>&1; [ $? -eq 2 ]; check "missing value exits 2" $?
+
+# --- P1-4: unknown engine lists valid values ---
+node scripts/search.mjs "test" --engine duckduckgo 2>&1 | grep -q "Valid engines: ddg"
+check "unknown engine lists valid engines" $?
+
+# --- P2-6: days-ignored note ---
+node scripts/search.mjs "AI news" --days 7 -n 1 --json 2>/dev/null | json "
+const b = d.engines.find(e => e.name === 'bing');
+if (!b || b.note !== 'days ignored by bing') process.exit(1);"; check "days-ignored note in json" $?
+
+# --- P0-2: junk detector unit test (synthetic) ---
+node --input-type=module -e "
+import('./scripts/search.mjs').then(({ looksLikeJunk }) => {
+  const junk = [{title:'Google',url:'https://www.google.com/'},{title:'Google',url:'https://www.google.com.hk/'},{title:'Google',url:'https://google.cn/'}];
+  const good = [{title:'WebGPU API - MDN',url:'https://developer.mozilla.org/zh-CN/docs/Web/API/WebGPU_API'},{title:'Learn WebGPU',url:'https://webgpufundamentals.org/'}];
+  if (looksLikeJunk(junk, 'webgpu') !== true) process.exit(1);
+  if (looksLikeJunk(good, 'webgpu') !== false) process.exit(1);
+});"; check "bing junk detector (synthetic)" $?
+
+if command -v python3 >/dev/null 2>&1; then
+  python3 -c "
+import sys; sys.path.insert(0, 'scripts')
+from search import _looks_like_junk as j
+junk=[{'title':'Google','url':'https://www.google.com/'},{'title':'Google','url':'https://www.google.com.hk/'},{'title':'Google','url':'https://google.cn/'}]
+good=[{'title':'WebGPU API - MDN','url':'https://developer.mozilla.org/zh-CN/docs/Web/API/WebGPU_API'},{'title':'Learn WebGPU','url':'https://webgpufundamentals.org/'}]
+assert j(junk,'webgpu') is True and j(good,'webgpu') is False"
+  check "py junk detector (synthetic)" $?
+fi
 
 echo; echo "== $PASS passed, $FAIL failed =="
 exit $FAIL
