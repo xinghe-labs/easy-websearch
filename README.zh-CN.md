@@ -13,85 +13,113 @@
 > 面向 AI 编程 agent 的多引擎网页搜索 + 网页正文读取，单文件夹即是一个
 > [Agent Skills](https://agentskills.io) 标准技能。
 
-[English](README.md) | 简体中文
-
-**零配置**：不配任何 API key 也能用（DuckDuckGo + Bing 基线）。
-**配 key 更强**：设置 `BRAVE_API_KEY`、`TAVILY_API_KEY`、`SERPER_API_KEY`、
-`EXA_API_KEY`、`FIRECRAWL_API_KEY`、`BOCHA_API_KEY`、`METASO_API_KEY`、
-`LINKUP_API_KEY`、`OLLAMA_API_KEY` 后对应引擎自动加入。另有两个免 key 备援
-引擎（AnySearch、Keenable），通过 `EASY_WEB_SEARCH_ENGINES=anysearch,keenable`
-按需启用。失败的引擎会进入 10 分钟冷却期，单个坏引擎不会拖垮整个请求。
+**零配置**：不配任何 API key 也能用（DuckDuckGo + Bing + 百度基线）。
+**配 key 更强**：11 个可选 key（Brave、Tavily、Serper、Exa、Firecrawl、博查、
+秘塔、Linkup、Ollama、AnySearch、Keenable —— 见下方
+[引擎 key 表](#引擎-key全部可选))配好后对应引擎自动加入。失败的引擎会
+进入 10 分钟冷却期，单个坏引擎不会拖垮整个请求。
 
 ```text
-查询 ──► [ ddg ] [ bing ] [ brave ] [ tavily ] [ serper ] [ exa ]
-              │        │        │        │         │        │
-              └──── 单引擎超时，独立降级互不影响 ────┘
-                 ［配 key 后自动加入：firecrawl / bocha / metaso / linkup / ollama］
+查询 ──► [ ddg ] [ bing ] [ baidu ] [ brave ] [ tavily ] [ serper ] [ exa ]
+              │        │        │        │        │         │        │
+              └──────── 单引擎超时，独立降级互不影响 ─────────┘
+                 ［配 key 后自动加入：firecrawl / bocha / metaso / linkup / ollama / searxng］
                               ▼
                 RRF 倒数排名融合 + URL 去重
                               ▼
           排序结果、来源引擎标注、JSON 结构化输出
 ```
 
-另有免 key 备援引擎（AnySearch、Keenable）在基线降级时兜底，
+另有免 key 备援引擎（AnySearch、Keenable、搜狗微信）在基线降级时兜底，
 以及 `doctor` 自检命令和失败冷却机制。
-
-<p align="center"><img src="assets/demo.svg" alt="easy-websearch real search output: engines status + fused results" width="720"></p>
 
 ## 快速上手
 
-**1. 安装**（一条命令，装入 Claude Code 及所有 Agent Skills 兼容工具）：
+**1. 安装** —— 二选一（也可共存）：
 
 ```bash
-npx skills add xinghe-labs/easy-websearch
+npx skills add xinghe-labs/easy-websearch      # 装为 agent 技能
+npm install -g easy-websearch                  # 或装为全局命令行
 ```
-
-> 更喜欢独立命令行？`npm install -g easy-websearch` 全局安装后随处可用
-> `easy-websearch` 命令 —— 无需 skill 目录：
-> `easy-websearch search "查询"` / `easy-websearch doctor`。
 
 **2. 验证**（可选但推荐 —— 这一步不需要任何 API key）：
 
 ```bash
-node ~/.agents/skills/easy-websearch/scripts/doctor.mjs
-easy-websearch doctor        # 同样的检查，走 npm CLI
+easy-websearch doctor                                    # npm 安装路径
+node ~/.agents/skills/easy-websearch/scripts/doctor.mjs  # skills 安装路径
 ```
 
-**3. 使用** —— 直接对 agent 说话即可。无需配置，无需记参数：
+**3. 使用** —— 直接对 agent 说话，或跑命令行。无需配置，无需记参数：
 
 > “帮我查一下 rust async runtime 的最新资料” · “search for the latest webgpu news” · “读一下这个网页讲了什么：https://…”
 
-到此为止 —— 基线（DuckDuckGo + Bing）零 API key 可用。可选的
-key（Brave/Tavily/Serper/Exa/Firecrawl/Bocha/Metaso/Linkup/Ollama）会自动
-升级引擎池 —— 见[安装](#安装)。
+```bash
+easy-websearch search "大模型 本地部署" --lang zh -n 5
+```
+
+到此为止 —— 基线（DuckDuckGo + Bing + 百度）零 API key 可用；可选 key 会
+自动升级引擎池（见[引擎 key 表](#引擎-key全部可选））。
 
 ## 为什么选 easy-web-search
 
 | | agent 内置搜索 | 单引擎类 skill | **easy-web-search** |
-|---|---|---|---|
-| 无 API key 可用 | 看 agent 脸色 | 通常不行 | ✅ DDG + Bing 基线 |
-| 引擎被反爬/限流时 | 不可控 | ❌ 单点故障 | ✅ 自动降级 + 多源融合 |
-| 中文信息源 | 不稳定 | 很少调优 | ✅ `cn-zh` / `zh-CN` 区域调优，CSDN/知乎/掘金可达 |
+| --- | --- | --- | --- | 
+| 无 API key 可用 | 看 agent 脸色 | 通常不行 | ✅ DDG + Bing + 百度基线 |
+| 引擎被反爬/限流时 | 不可控 | ❌ 单点故障 | ✅ 自动降级 + 多源融合 + 冷却 |
+| 中文信息源 | 不稳定 | 很少调优 | ✅ `cn-zh` / `zh-CN` 区域调优，百度 + CSDN/知乎/掘金可达 |
 | 告诉你哪些引擎答了 | 否 | 否 | ✅ 每引擎状态 + 每条结果来源标注 |
 | 运行时依赖 | — | 常 npm/pip | ✅ 零依赖（Node ≥18 **或** Python ≥3.11 标准库） |
 | 代理感知 | 不一定 | 很少 | ✅ 读取 `HTTPS_PROXY`（Node 内置 CONNECT 隧道） |
 
-## 可选 key — 每个 30 秒
+<p align="center"><img src="assets/demo.svg" alt="easy-websearch real search output: engines status + fused results" width="720"></p>
+
+## 安装
+
+两种安装形态 —— 按用途选择（可共存）：
+
+### 作为 agent 技能（Claude Code / Codex / Cursor / Gemini CLI…）
+
+装好后 agent 会在你要求搜索时自动调用。
+
+```bash
+# skills CLI（重复执行即原地更新）
+npx skills add xinghe-labs/easy-websearch
+
+# 或直接克隆
+git clone https://github.com/xinghe-labs/easy-websearch ~/.claude/skills/easy-websearch
+```
+
+### 作为全局命令行（自己的终端）
+
+```bash
+npm install -g easy-websearch
+```
+
+全局安装后随处可用 `easy-websearch` 命令 —— search / fetch / doctor /
+setup 四个子命令。或免安装直接跑：`npx easy-websearch@latest doctor`
+
+```bash
+easy-websearch search "大模型 本地部署" --lang zh -n 5
+easy-websearch fetch "https://example.com/article"
+easy-websearch doctor
+```
+
+### 引擎 key（全部可选）
 
 所有 key 都可选。配一个，对应引擎自动加入搜索池。按性价比排序：
 
-| 顺序 | 引擎 | 带来什么 | 免费额度 | 注册直达 |
-|---|---|---|---|---|
-| 1 | **Brave** | 稳定的国际搜索 | 2,000 次/月 | [brave.com/search/api](https://brave.com/search/api/) → Free 计划 |
-| 2 | **Tavily** | LLM 友好摘要 | 1,000 次/月 | [app.tavily.com](https://app.tavily.com/) |
-| 3 | **Ollama** | 多一个稳定源 | 免费账号 | [ollama.com](https://ollama.com/) → Account → API keys |
-| 4 | **博查 Bocha** | 最强中文网页搜索 | 新客额度（付费） | [open.bochaai.com](https://open.bochaai.com/) |
-| 5 | **Serper** | Google 结果 | 试用额度 | [serper.dev](https://serper.dev/) |
-| 6 | **Exa** | 语义搜索 | 试用额度 | [dashboard.exa.ai](https://dashboard.exa.ai/) |
-| 7 | **Firecrawl** | 搜索 + fetch 抓取升级 | 试用额度 | [firecrawl.dev](https://firecrawl.dev/) |
-| 8 | **秘塔 Metaso** | 中文 AI 搜索 | 新客额度（付费） | [metaso.cn/search-api/api-keys](https://metaso.cn/search-api/api-keys) |
-| 9 | **Linkup** | 带引用的回答 | 免费额度 | [linkup.so](https://linkup.so/) |
-| — | AnySearch / Keenable | 免 key 备援（需 opt-in） | 匿名可用 | [anysearch.com](https://anysearch.com/) / [keenable.ai](https://keenable.ai/) |
+| 顺序 | 引擎 | 带来什么 | 免费额度 | 注册直达 | 环境变量 |
+| --- | --- | --- | --- | --- | --- | 
+| 1 | **Brave** | 稳定的国际搜索 | 2,000 次/月 | [brave.com/search/api](https://brave.com/search/api/) → Free 计划 | `BRAVE_API_KEY` |
+| 2 | **Tavily** | LLM 友好摘要 | 1,000 次/月 | [app.tavily.com](https://app.tavily.com/) | `TAVILY_API_KEY` |
+| 3 | **Ollama** | 多一个稳定源 | 免费账号 | [ollama.com](https://ollama.com/) → Account → API keys | `OLLAMA_API_KEY` |
+| 4 | **博查 Bocha** | 最强中文网页搜索 | 新客额度（付费） | [open.bochaai.com](https://open.bochaai.com/) | `BOCHA_API_KEY` |
+| 5 | **Serper** | Google 结果 | 试用额度 | [serper.dev](https://serper.dev/) | `SERPER_API_KEY` |
+| 6 | **Exa** | 语义搜索 | 试用额度 | [dashboard.exa.ai](https://dashboard.exa.ai/) | `EXA_API_KEY` |
+| 7 | **Firecrawl** | 搜索 + fetch 抓取升级 | 试用额度 | [firecrawl.dev](https://firecrawl.dev/) | `FIRECRAWL_API_KEY` |
+| 8 | **秘塔 Metaso** | 中文 AI 搜索 | 新客额度（付费） | [metaso.cn/search-api/api-keys](https://metaso.cn/search-api/api-keys) | `METASO_API_KEY` |
+| 9 | **Linkup** | 带引用的回答 | 免费额度 | [linkup.so](https://linkup.so/) | `LINKUP_API_KEY` |
+| — | AnySearch / Keenable | 免 key 备援（需 opt-in） | 匿名可用 | [anysearch.com](https://anysearch.com/) / [keenable.ai](https://keenable.ai/) | `ANYSEARCH_API_KEY` / `KEENABLE_API_KEY` |
 
 key 放进 agent 的环境变量（如 Claude Code 的 `~/.claude/settings.json`）：
 
@@ -99,11 +127,13 @@ key 放进 agent 的环境变量（如 Claude Code 的 `~/.claude/settings.json`
 { "env": { "BRAVE_API_KEY": "…", "TAVILY_API_KEY": "…" } }
 ```
 
-然后 `node scripts/doctor.mjs` —— 每个缺失的 key 现在都会显示去哪申请。
+然后 `easy-websearch doctor`（或 `node scripts/doctor.mjs`）—— 每个缺失的
+key 现在都会显示去哪申请。
 
 ## 自建 SearXNG（无配额、无 key）
 
-完整部署指南（docker-compose、settings.yml、网络注意事项）：[`docs/searxng-setup.md`](docs/searxng-setup.md)。
+完整部署指南（docker-compose、settings.yml、远程服务器、NAT、网络注意
+事项）：[`docs/searxng-setup.md`](docs/searxng-setup.md)。
 
 如果你自己跑 [SearXNG](https://docs.searxng.org/)（docker 一行：
 `docker run -p 8080:8080 searxng/searxng`），把 skill 指向它：
@@ -127,69 +157,6 @@ export SEARXNG_BASE_URL=http://localhost:8080   # 或 https://searx.example.com
 
 私有实例 = 无配额、无 API key 的额外引擎，也是替代“共享账号”的干净方案。
 
-## 安装
-
-### npm（全局命令行）
-
-```bash
-npm install -g easy-websearch
-```
-
-全局安装后随处可用 `easy-websearch` 命令 —— search / fetch / doctor /
-setup 四个子命令，无需 skill 目录：
-
-```bash
-easy-websearch search "大模型 本地部署" --lang zh -n 5
-easy-websearch fetch "https://example.com/article"
-easy-websearch doctor
-```
-
-或者免安装直接跑：`npx easy-websearch@latest doctor`
-
-### Claude Code / 任何支持 Agent Skills 的工具
-
-把本文件夹放进 skills 目录即可（重复执行 add 命令会原地更新已装版本）：
-
-```bash
-# 用户级
-git clone https://github.com/xinghe-labs/easy-websearch ~/.claude/skills/easy-websearch
-
-# 或项目级
-git clone https://github.com/xinghe-labs/easy-websearch .claude/skills/easy-websearch
-```
-
-用 [skills CLI](https://skills.sh)：
-
-```bash
-npx skills add xinghe-labs/easy-websearch
-```
-
-验证安装：
-
-```bash
-node scripts/doctor.mjs    # 每个引擎：可达 / 缺 key / 冷却中
-```
-
-### 可选的 key 增强
-
-| 环境变量 | 引擎 | 免费额度 | 申请地址 |
-|---|---|---|---|
-| `BRAVE_API_KEY` | Brave Search | 2,000 次/月 | brave.com/search/api |
-| `TAVILY_API_KEY` | Tavily | 1,000 次/月 | tavily.com |
-| `SERPER_API_KEY` | Google（Serper） | 试用额度 | serper.dev |
-| `EXA_API_KEY` | Exa（语义搜索） | 试用额度 | exa.ai |
-| `FIRECRAWL_API_KEY` | Firecrawl | 试用额度；同时升级 fetch 抓取 | firecrawl.dev |
-| `BOCHA_API_KEY` | 博查（中文搜索） | 付费，有免费额度 | open.bochaai.com |
-| `METASO_API_KEY` | 秘塔（中文 AI 搜索） | 付费，有免费额度 | metaso.cn/search-api |
-| `LINKUP_API_KEY` | Linkup | 免费额度 | linkup.so |
-| `OLLAMA_API_KEY` | Ollama 网页搜索 | 免费账号 | ollama.com |
-| `ANYSEARCH_API_KEY` | AnySearch | 可不填——匿名限速可用 | anysearch.com |
-| `KEENABLE_API_KEY` | Keenable | 可不填——匿名限速可用 | keenable.ai |
-
-全部可选，基线引擎什么都不用配。两个免 key 备援引擎不进默认搜索（匿名配
-额低），用 `--engine anysearch,keenable` 或
-`EASY_WEB_SEARCH_ENGINES=anysearch,keenable` 启用。
-
 ## 用法
 
 ```bash
@@ -203,7 +170,7 @@ node scripts/search.mjs "webgpu 教程" --site developer.mozilla.org --exclude-s
 # 结构化输出（供 agent 二次处理）
 node scripts/search.mjs "qwen3 评测" --json
 
-# 读网页正文为 Markdown（被反爬时自动降级到 r.jina.ai）
+# 读网页正文为 Markdown（被反爬时自动降级：直连 → Firecrawl → r.jina.ai）
 node scripts/fetch.mjs "https://example.com/some/article"
 ```
 
@@ -228,23 +195,22 @@ Bing `/ck/a` 和 DDG `/l/?uddg=` 跳转），跨引擎累加后排序——**多
 引擎都认可的页面自然浮到顶部**。
 
 失败是预期内的：任何引擎都可能超时、被限流或吃到反爬页——它的状态会被
-如实标注，并进入 10 分钟冷却（后续默认运行自动跳过；用 `--engine` 或
+如实标注，并进入 10 分钟冷却（后续默认搜索自动跳过；用 `--engine` 或
 `--no-cooldown` 可强制重试），融合继续用剩下的源。全部引擎都失败时，你
 会拿到各引擎的错误信息，而不是沉默。
 
-## 健康自检
+## 健康自检与故障排查
 
 ```bash
-node scripts/doctor.mjs        # 每引擎状态、延迟、配置缺失一目了然
+easy-websearch doctor          # 每引擎状态、延迟、配置缺失一目了然
+node scripts/doctor.mjs        # 同上（skill 目录内）
 python3 scripts/doctor.py --json
 ```
 
-## 故障排查
-
-**某引擎显示 `skipped (cooldown: ...)`** —— 它最近失败过（超时/反爬/key 错误）。
-失败引擎会在后续默认搜索中被跳过 10 分钟，避免每次都白烧请求。状态存在
-`$XDG_CACHE_HOME/easy-websearch/cooldowns.json`（默认 `~/.cache/...`）。
-用 `node scripts/doctor.mjs --clear-cooldown` 重置；单次用 `--no-cooldown`
+**某引擎显示 `skipped (cooldown: ...)`** —— 它最近失败过（超时/反爬/key 错
+误）。失败引擎会在后续默认搜索中被跳过 10 分钟，避免每次都白烧请求。状态
+存在 `$XDG_CACHE_HOME/easy-websearch/cooldowns.json`（默认 `~/.cache/...`）。
+用 `easy-websearch doctor --clear-cooldown` 重置；单次用 `--no-cooldown`
 绕过；或显式点名引擎（`--engine ddg`）。
 
 **DDG 超时 / HTTP 202** —— DuckDuckGo 封锁部分网络。Bing 在多数网络可达；
@@ -255,7 +221,7 @@ python3 scripts/doctor.py --json
 
 ## 环境要求
 
-- Node ≥ 18（`scripts/*.mjs`）或 Python ≥ 3.11（`scripts/*.py`）——有其一即可
+- Node ≥ 18（`scripts/*.mjs`）或 Python ≥ 3.11（`scripts/*.py`）—— 有其一即可
 - 能出网。走代理？设好 `HTTPS_PROXY`，两个运行时都会遵守。
 
 ## 已知边界（如实说明）
@@ -263,9 +229,9 @@ python3 scripts/doctor.py --json
 - 基线 HTML 解析（DDG/Bing）在引擎改版时会失效——CI 每周探测并自动开
   issue，通常在用户撞上之前就能发现
 - `--days` 在 DDG 上是近似值（日/周/月粒度），Bing HTML 不支持
-- SearXNG 公共实例因不稳定被评估后放弃（见 `references/engine-notes.md`）；
-  自建 SearXNG 支持在路线图上
-- 深度研究工作流文档在 v2 落地（`references/deep-research.md`）
+- 百度/搜狗的反爬页对客户端指纹敏感：node 运行时稳定通过，python 运行时
+  可能间歇命中验证页——这两个引擎会软失败，其他引擎兜底
+- 深度研究多步工作流文档在 v2 落地（`references/deep-research.md`）
 
 ## 许可证
 

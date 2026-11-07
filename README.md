@@ -14,83 +14,122 @@ Multi-engine web search + page reader for AI coding agents — as a single
 [Agent Skills](https://agentskills.io)-compatible skill folder.
 
 **Zero-config**: works with no API key at all (DuckDuckGo + Bing baseline).
-**Better with keys**: set `BRAVE_API_KEY`, `TAVILY_API_KEY`, `SERPER_API_KEY`,
-`EXA_API_KEY`, `FIRECRAWL_API_KEY`, `BOCHA_API_KEY`, `METASO_API_KEY`,
-`LINKUP_API_KEY`, or `OLLAMA_API_KEY` and those engines join the pool
-automatically. Two more keyless engines (AnySearch, Keenable) are available
-as opt-in backups (`EASY_WEB_SEARCH_ENGINES=anysearch,keenable`) for extra
-coverage. Failing engines get a 10-minute cooldown so one bad engine never
-burns the whole request.
+**Better with keys**: set any of 11 optional keys (Brave, Tavily, Serper, Exa,
+Firecrawl, Bocha, Metaso, Linkup, Ollama, AnySearch, Keenable — see the
+[engine keys table](#engine-keys-all-optional)) and those engines join the
+pool automatically. Failing engines get a 10-minute cooldown so one bad
+engine never burns the whole request.
 
 ```text
-query ──► [ ddg ] [ bing ] [ brave ] [ tavily ] [ serper ] [ exa ]
-              │        │        │        │         │        │
-              └── per-engine timeout, independent failover ──┘
-                 [+ firecrawl, bocha, metaso, linkup, ollama w/ keys]
+query ──► [ ddg ] [ bing ] [ baidu ] [ brave ] [ tavily ] [ serper ] [ exa ]
+              │        │        │        │        │         │        │
+              └──────── per-engine timeout, independent failover ────────┘
+                 [+ firecrawl, bocha, metaso, linkup, ollama, searxng w/ keys]
                               ▼
               Reciprocal Rank Fusion + URL dedup
                               ▼
             ranked results, engine attribution, JSON output
 ```
 
-Plus two keyless backup engines (AnySearch, Keenable) for when the
+Plus keyless backups (AnySearch, Keenable, Sogou Weixin) for when the
 baselines degrade, a `doctor` self-check command, and a failure cooldown.
 
 ## Quick start
 
-**1. Install** (one command; into Claude Code and any Agent-Skills agent):
+**1. Install** — either as an agent skill (into Claude Code and any
+Agent-Skills agent):
 
 ```bash
 npx skills add xinghe-labs/easy-websearch
 ```
 
-> Prefer a standalone CLI? `npm install -g easy-websearch` gives you the
-> `easy-websearch` command everywhere — no skill folder needed:
-> `easy-websearch search "query"` / `easy-websearch doctor`.
+…or as a standalone global CLI:
+
+```bash
+npm install -g easy-websearch
+```
 
 **2. Verify** (optional but recommended — no API key needed for this):
 
 ```bash
-node ~/.agents/skills/easy-websearch/scripts/doctor.mjs
-easy-websearch doctor        # same check, via the npm CLI
+easy-websearch doctor                                    # npm install path
+node ~/.agents/skills/easy-websearch/scripts/doctor.mjs  # skills add path
 ```
 
-**3. Use it** — just talk to your agent. No configuration, no flags to remember:
+**3. Use it** — talk to your agent, or run the CLI. No configuration, no
+flags to remember:
 
 > “帮我查一下 rust async runtime 的最新资料” · “search for the latest webgpu news” · “读一下这个网页讲了什么：https://…”
 
-That's it — the baseline (DuckDuckGo + Bing) works with zero API keys.
-Optional keys (Brave/Tavily/Serper/Exa/Firecrawl/Bocha/Metaso/Linkup/Ollama)
-upgrade the engine pool automatically — see [Install](#install).
+```bash
+easy-websearch search "大模型 本地部署" --lang zh -n 5
+```
+
+That's it — the baseline (DuckDuckGo + Bing + Baidu) works with zero API
+keys; optional keys upgrade the pool automatically (see
+[Engine keys](#engine-keys-all-optional)).
 
 ## Why easy-websearch
 
 | | built-in web tools | single-engine skills | **easy-websearch** |
 |---|---|---|---|
-| Works with no API key | agent-dependent | often not | ✅ DDG + Bing baseline |
-| Survives engine blocks/rate limits | n/a | ❌ single point of failure | ✅ failover + fusion |
-| Chinese sources | varies | rarely tuned | ✅ `cn-zh` / `zh-CN` region tuning, CSDN/知乎/juejin reachable |
+| Works with no API key | agent-dependent | often not | ✅ DDG + Bing + Baidu baseline |
+| Survives engine blocks/rate limits | n/a | ❌ single point of failure | ✅ failover + fusion + cooldown |
+| Chinese sources | varies | rarely tuned | ✅ `cn-zh` / `zh-CN` region tuning, Baidu + CSDN/知乎/juejin reachable |
 | Tells you *which* engines answered | no | no | ✅ per-engine status + per-hit attribution |
 | Runtime deps | — | often npm/pip | ✅ zero (Node ≥18 **or** Python ≥3.11 stdlib) |
 | Proxy-aware | varies | rarely | ✅ honors `HTTPS_PROXY` (incl. a CONNECT tunnel for Node `fetch`) |
 
-## Optional engine keys — 30 seconds each
+<p align="center"><img src="assets/demo.svg" alt="easy-websearch real search output: engines status + fused results" width="720"></p>
+
+## Install
+
+Two install shapes — pick per use case (both can coexist):
+
+### As an agent skill (for Claude Code / Codex / Cursor / Gemini CLI…)
+
+The agent then searches automatically whenever you ask it to.
+
+```bash
+# skills CLI (re-running updates in place)
+npx skills add xinghe-labs/easy-websearch
+
+# or clone directly
+git clone https://github.com/xinghe-labs/easy-websearch ~/.claude/skills/easy-websearch
+```
+
+### As a global CLI (for your own terminal)
+
+```bash
+npm install -g easy-websearch
+```
+
+Gives you the `easy-websearch` command everywhere — search / fetch / doctor /
+setup as subcommands. Or run without installing: `npx easy-websearch@latest doctor`
+
+```bash
+easy-websearch search "大模型 本地部署" --lang zh -n 5
+easy-websearch fetch "https://example.com/article"
+easy-websearch doctor
+```
+
+### Engine keys (all optional)
 
 Every key is optional. Add one and its engine joins the search pool
 automatically. Fastest wins first:
 
-| Order | Engine | What it adds | Free | Sign up (direct link) |
-|---|---|---|---|---|
-| 1 | **Brave** | stable international results | 2,000/mo | [brave.com/search/api](https://brave.com/search/api/) → Free plan |
-| 2 | **Tavily** | LLM-friendly summaries | 1,000/mo | [app.tavily.com](https://app.tavily.com/) |
-| 3 | **Ollama** | one more solid source | free account | [ollama.com](https://ollama.com/) → Account → API keys |
-| 4 | **Bocha 博查** | best Chinese web results | grant (paid) | [open.bochaai.com](https://open.bochaai.com/) |
-| 5 | **Serper** | Google results | trial | [serper.dev](https://serper.dev/) |
-| 6 | **Exa** | semantic search | trial | [dashboard.exa.ai](https://dashboard.exa.ai/) |
-| 7 | **Firecrawl** | search + better `fetch` | trial | [firecrawl.dev](https://firecrawl.dev/) |
-| 8 | **Metaso 秘塔** | Chinese AI search | grant (paid) | [metaso.cn/search-api/api-keys](https://metaso.cn/search-api/api-keys) |
-| 9 | **Linkup** | sourced answers | free tier | [linkup.so](https://linkup.so/) |
-| — | AnySearch / Keenable | keyless backups (opt-in) | anonymous OK | [anysearch.com](https://anysearch.com/) / [keenable.ai](https://keenable.ai/) |
+| Order | Engine | What it adds | Free | Sign up (direct link) | Env var |
+|---|---|---|---|---|---|
+| 1 | **Brave** | stable international results | 2,000/mo | [brave.com/search/api](https://brave.com/search/api/) → Free plan | `BRAVE_API_KEY` |
+| 2 | **Tavily** | LLM-friendly summaries | 1,000/mo | [app.tavily.com](https://app.tavily.com/) | `TAVILY_API_KEY` |
+| 3 | **Ollama** | one more solid source | free account | [ollama.com](https://ollama.com/) → Account → API keys | `OLLAMA_API_KEY` |
+| 4 | **Bocha 博查** | best Chinese web results | grant (paid) | [open.bochaai.com](https://open.bochaai.com/) | `BOCHA_API_KEY` |
+| 5 | **Serper** | Google results | trial | [serper.dev](https://serper.dev/) | `SERPER_API_KEY` |
+| 6 | **Exa** | semantic search | trial | [dashboard.exa.ai](https://dashboard.exa.ai/) | `EXA_API_KEY` |
+| 7 | **Firecrawl** | search + better `fetch` | trial | [firecrawl.dev](https://firecrawl.dev/) | `FIRECRAWL_API_KEY` |
+| 8 | **Metaso 秘塔** | Chinese AI search | grant (paid) | [metaso.cn/search-api/api-keys](https://metaso.cn/search-api/api-keys) | `METASO_API_KEY` |
+| 9 | **Linkup** | sourced answers | free tier | [linkup.so](https://linkup.so/) | `LINKUP_API_KEY` |
+| — | AnySearch / Keenable | keyless backups (opt-in) | anonymous OK | [anysearch.com](https://anysearch.com/) / [keenable.ai](https://keenable.ai/) | `ANYSEARCH_API_KEY` / `KEENABLE_API_KEY` |
 
 Put keys in your agent's env (e.g. Claude Code `~/.claude/settings.json`):
 
@@ -98,11 +137,13 @@ Put keys in your agent's env (e.g. Claude Code `~/.claude/settings.json`):
 { "env": { "BRAVE_API_KEY": "…", "TAVILY_API_KEY": "…" } }
 ```
 
-Then `node scripts/doctor.mjs` — each missing key now prints where to get it.
+Then `easy-websearch doctor` (or `node scripts/doctor.mjs`) — each missing
+key prints where to get it.
 
 ## Self-hosted SearXNG (unlimited, no keys)
 
-Full deployment guide (docker-compose, settings.yml, network gotchas): [`docs/searxng-setup.md`](docs/searxng-setup.md).
+Full deployment guide (docker-compose, settings.yml, remote servers, NAT,
+network gotchas): [`docs/searxng-setup.md`](docs/searxng-setup.md).
 
 If you run [SearXNG](https://docs.searxng.org/) yourself (docker one-liner:
 `docker run -p 8080:8080 searxng/searxng`), point the skill at it:
@@ -128,70 +169,6 @@ instance side:
 
 A private instance gives you an unlimited engine with no API keys and no
 rate limits — a clean alternative to sharing accounts.
-
-## Install
-
-### npm (global CLI)
-
-```bash
-npm install -g easy-websearch
-```
-
-Gives you the `easy-websearch` command everywhere — search / fetch / doctor /
-setup as subcommands, no skill folder needed:
-
-```bash
-easy-websearch search "大模型 本地部署" --lang zh -n 5
-easy-websearch fetch "https://example.com/article"
-easy-websearch doctor
-```
-
-Or run without installing: `npx easy-websearch@latest doctor`
-
-### Claude Code / any Agent Skills runtime
-
-Copy or clone this folder into your skills directory (re-running the add
-command updates an existing installation in place):
-
-```bash
-# user-level
-git clone https://github.com/xinghe-labs/easy-websearch ~/.claude/skills/easy-websearch
-
-# or project-level
-git clone https://github.com/xinghe-labs/easy-websearch .claude/skills/easy-websearch
-```
-
-With the [skills CLI](https://skills.sh):
-
-```bash
-npx skills add xinghe-labs/easy-websearch
-```
-
-Verify the install:
-
-```bash
-node scripts/doctor.mjs    # every engine: reachable / key missing / cooldown
-```
-
-### Optional engine keys
-
-| Key | Engine | Free tier | Get it |
-|---|---|---|---|
-| `BRAVE_API_KEY` | Brave Search | 2,000/mo | brave.com/search/api |
-| `TAVILY_API_KEY` | Tavily | 1,000/mo | tavily.com |
-| `SERPER_API_KEY` | Google (Serper) | trial credits | serper.dev |
-| `EXA_API_KEY` | Exa (semantic) | trial credits | exa.ai |
-| `FIRECRAWL_API_KEY` | Firecrawl | trial credits; also upgrades `fetch` | firecrawl.dev |
-| `BOCHA_API_KEY` | 博查 (Chinese web) | paid, free grant | open.bochaai.com |
-| `METASO_API_KEY` | 秘塔 Metaso (Chinese AI search) | paid, free grant | metaso.cn/search-api |
-| `LINKUP_API_KEY` | Linkup | free tier | linkup.so |
-| `OLLAMA_API_KEY` | Ollama web search | free account | ollama.com |
-| `ANYSEARCH_API_KEY` | AnySearch | optional — anonymous works with lower limits | anysearch.com |
-| `KEENABLE_API_KEY` | Keenable | optional — anonymous works with lower limits | keenable.ai |
-
-All optional. Baseline engines need nothing. The two keyless backup engines
-are excluded from the default run (their anonymous quotas are low); enable
-with `--engine anysearch,keenable` or `EASY_WEB_SEARCH_ENGINES=anysearch,keenable`.
 
 ## Usage
 
@@ -225,8 +202,6 @@ engines:
    [bing, ddg]          ← hit by both engines ⇒ ranked first
 ```
 
-<p align="center"><img src="assets/demo.svg" alt="easy-websearch real search output: engines status + fused results" width="720"></p>
-
 ## How fusion works
 
 Each engine returns a ranked list. A URL found at rank *r* by an engine
@@ -241,20 +216,19 @@ cooldown (skipped on subsequent default runs; override with `--engine` or
 `--no-cooldown`), and fusion proceeds with the rest. If *all* engines fail,
 you get their error messages, not silence.
 
-## Health check
+## Health check & troubleshooting
 
 ```bash
-node scripts/doctor.mjs        # per-engine status, latency, config gaps
+easy-websearch doctor          # per-engine status, latency, config gaps
+node scripts/doctor.mjs        # same, from a skill folder
 python3 scripts/doctor.py --json
 ```
-
-## Troubleshooting
 
 **An engine says `skipped (cooldown: ...)`** — it failed recently (timeout,
 bot-block, bad key). Failing engines are skipped for 10 minutes on default
 searches so they don't burn every request. State lives in
 `$XDG_CACHE_HOME/easy-websearch/cooldowns.json` (`~/.cache/...` by default).
-Reset it with `node scripts/doctor.mjs --clear-cooldown`, bypass per-run with
+Reset it with `easy-websearch doctor --clear-cooldown`, bypass per-run with
 `--no-cooldown`, or name the engine explicitly (`--engine ddg`).
 
 **DDG fails with timeout / HTTP 202** — DuckDuckGo blocks some networks.
@@ -276,8 +250,9 @@ later or use a keyed engine.
   CI re-probes engines weekly and opens an issue when one dies.
 - `--days` is approximate on DDG (day/week/month granularity) and not
   supported by Bing HTML.
-- SearXNG public instances were evaluated and dropped for instability
-  (see `references/engine-notes.md`); self-hosted SearXNG support is on the roadmap.
+- Baidu/Sogou anti-bot pages are fingerprint-sensitive: the node runtime
+  passes consistently; the python runtime may intermittently hit
+  verification pages — those engines fail soft and other engines cover.
 - Deep-research multi-step workflow docs land in v2
   (`references/deep-research.md`).
 
