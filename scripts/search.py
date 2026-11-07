@@ -454,6 +454,37 @@ def fuse(engine_results):
     return sorted(by_url.values(), key=lambda x: -x["score"])
 
 
+# ------------------------------------------------------- cooldown ----
+# Engines that just failed get a cooldown: default runs skip them (they
+# would likely fail again and burn the request budget). Explicit --engine
+# and --no-cooldown bypass the skip. State persists across invocations in
+# the user's cache dir; IO failures degrade silently to no cooldown.
+COOLDOWN_MS = 10 * 60 * 1000
+
+
+def _cooldown_path() -> str:
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    return os.path.join(base, "easy-websearch", "cooldowns.json")
+
+
+def _load_cooldowns() -> dict:
+    try:
+        with open(_cooldown_path(), encoding="utf-8") as f:
+            state = json.load(f)
+            return state if isinstance(state, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_cooldowns(state: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(_cooldown_path()), exist_ok=True)
+        with open(_cooldown_path(), "w", encoding="utf-8") as f:
+            json.dump(state, f)
+    except OSError:
+        pass  # best effort — cooldown is an optimization, not a guarantee
+
+
 # ------------------------------------------------------------------- main ----
 def main():
     p = argparse.ArgumentParser(description="easy-websearch: multi-engine web search")
@@ -465,6 +496,7 @@ def main():
     p.add_argument("--lang", default="")
     p.add_argument("--engine", default="")
     p.add_argument("--timeout", type=int, default=8)
+    p.add_argument("--no-cooldown", action="store_true")
     p.add_argument("--json", action="store_true")
     args = p.parse_args()
 
@@ -482,6 +514,19 @@ def main():
               "keyed engines need their env vars.", file=sys.stderr)
         sys.exit(2)
 
+    # Skip engines in active cooldown (default selection only; explicit
+    # --engine always wins). Never skip down to zero engines.
+    state = {} if args.no_cooldown else _load_cooldowns()
+    now_ms = int(time.time() * 1000)
+    names = [n for n, _ in engines]
+    in_cooldown = [n for n in names if state.get(n, {}).get("until", 0) > now_ms]
+    cooldown_skipped = []
+    if not args.engine and in_cooldown and len(in_cooldown) < len(engines):
+        for n in in_cooldown:
+            cooldown_skipped.append({"name": n, "ok": False, "count": 0, "ms": 0,
+                                     "error": f"skipped (cooldown: {state[n].get('reason', 'recent failure')})"})
+        engines = [(n, fn) for n, fn in engines if n not in in_cooldown]
+
     statuses = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(engines)) as ex:
         futures = {ex.submit(fn, ctx): name for name, fn in engines}
@@ -497,12 +542,28 @@ def main():
                                  "ms": int((time.time() - t0) * 1000), "results": [], "error": str(e)})
 
     ok_results = [(s["name"], s["results"]) for s in statuses if s["ok"]]
+
+    # Persist cooldown bookkeeping: successes clear, failures arm a cooldown.
+    dirty = False
+    for s in statuses:
+        if s["ok"]:
+            if s["name"] in state:
+                del state[s["name"]]
+                dirty = True
+        elif state.get(s["name"], {}).get("until", 0) < now_ms + COOLDOWN_MS:
+            state[s["name"]] = {"until": now_ms + COOLDOWN_MS,
+                                "reason": s["error"][:120]}
+            dirty = True
+    if dirty and not args.no_cooldown:
+        _save_cooldowns(state)
+
+    all_engines = cooldown_skipped + statuses
     fused = fuse(ok_results)[: args.num]
 
     if args.json:
         print(json.dumps({
             "query": ctx["query"],
-            "engines": [{k: s[k] for k in ("name", "ok", "count", "ms", "error")} for s in statuses],
+            "engines": [{k: s[k] for k in ("name", "ok", "count", "ms", "error")} for s in all_engines],
             "results": [{"rank": i + 1, "title": r["title"], "url": r["url"],
                          "snippet": r["snippet"], "score": round(r["score"], 4),
                          "engines": r["engines"]} for i, r in enumerate(fused)],
@@ -510,7 +571,8 @@ def main():
     else:
         lines = "\n  ".join(
             f"{s['name']}: {s['count']} results in {s['ms']}ms" if s["ok"]
-            else f"{s['name']}: FAILED ({s['error']}) in {s['ms']}ms" for s in statuses)
+            else f"{s['name']}: {s['error']}" if s["error"].startswith("skipped")
+            else f"{s['name']}: FAILED ({s['error']}) in {s['ms']}ms" for s in all_engines)
         print(f"engines:\n  {lines}\n", file=sys.stderr)
         if not fused:
             print("No results from any engine.", file=sys.stderr)

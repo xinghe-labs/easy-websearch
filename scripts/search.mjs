@@ -20,6 +20,9 @@
  */
 import http from "node:http";
 import https from "node:https";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
@@ -30,7 +33,7 @@ const RRF_K = 60;
 function parseArgs(argv) {
   const args = {
     query: "", n: 10, days: 0, site: [], excludeSite: [], lang: "",
-    engines: "", timeout: DEFAULT_TIMEOUT, json: false,
+    engines: "", timeout: DEFAULT_TIMEOUT, json: false, noCooldown: false,
   };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
@@ -43,6 +46,7 @@ function parseArgs(argv) {
     else if (a === "--engine") args.engines = argv[++i];
     else if (a === "--timeout") args.timeout = (parseInt(argv[++i], 10) || 8) * 1000;
     else if (a === "--json") args.json = true;
+    else if (a === "--no-cooldown") args.noCooldown = true;
     else rest.push(a);
   }
   args.query = rest.join(" ").trim();
@@ -484,6 +488,32 @@ function fuse(engineResults) {
   return [...byUrl.values()].sort((a, b) => b.score - a.score);
 }
 
+// ------------------------------------------------------- cooldown ----
+// Engines that just failed get a cooldown: default runs skip them (they
+// would likely fail again and burn the request budget). Explicit --engine
+// and --no-cooldown bypass the skip. State persists across invocations in
+// the user's cache dir; IO failures degrade silently to no cooldown.
+const COOLDOWN_MS = 10 * 60 * 1000;
+
+function cooldownPath() {
+  const base = process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache");
+  return path.join(base, "easy-websearch", "cooldowns.json");
+}
+
+function loadCooldowns() {
+  try {
+    const state = JSON.parse(fs.readFileSync(cooldownPath(), "utf8"));
+    return state && typeof state === "object" ? state : {};
+  } catch { return {}; }
+}
+
+function saveCooldowns(state) {
+  try {
+    fs.mkdirSync(path.dirname(cooldownPath()), { recursive: true });
+    fs.writeFileSync(cooldownPath(), JSON.stringify(state));
+  } catch { /* best effort — cooldown is an optimization, not a guarantee */ }
+}
+
 // ---------------------------------------------------------------- main ----
 async function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -492,10 +522,23 @@ async function main() {
     process.exit(2);
   }
   const ctx = { ...args, query: buildQuery(args) };
-  const engines = availableEngines(args.engines);
+  let engines = availableEngines(args.engines);
   if (engines.length === 0) {
     console.error("No search engines available. Baseline ddg/bing need network; keyed engines need their env vars.");
     process.exit(2);
+  }
+
+  // Skip engines in active cooldown (default selection only; explicit
+  // --engine always wins). Never skip down to zero engines.
+  const state = args.noCooldown ? {} : loadCooldowns();
+  const now = Date.now();
+  const inCooldown = engines.filter((n) => (state[n]?.until ?? 0) > now);
+  const cooldownSkipped = [];
+  if (!args.engines && inCooldown.length && inCooldown.length < engines.length) {
+    for (const n of inCooldown) {
+      cooldownSkipped.push({ name: n, ok: false, count: 0, ms: 0, error: `skipped (cooldown: ${state[n].reason || "recent failure"})` });
+    }
+    engines = engines.filter((n) => !inCooldown.includes(n));
   }
 
   const statuses = await Promise.all(
@@ -511,20 +554,33 @@ async function main() {
     })
   );
 
+  // Persist cooldown bookkeeping: successes clear, failures arm a cooldown.
+  let dirty = false;
+  for (const s of statuses) {
+    if (s.ok) {
+      if (state[s.name]) { delete state[s.name]; dirty = true; }
+    } else if ((state[s.name]?.until ?? 0) < Date.now() + COOLDOWN_MS) {
+      state[s.name] = { until: Date.now() + COOLDOWN_MS, reason: s.error.slice(0, 120) };
+      dirty = true;
+    }
+  }
+  if (dirty && !args.noCooldown) saveCooldowns(state);
+
+  const allEngines = [...cooldownSkipped, ...statuses];
   const fused = fuse(statuses.filter((s) => s.ok)).slice(0, args.n);
 
   if (args.json) {
     console.log(JSON.stringify({
       query: ctx.query,
-      engines: statuses.map(({ name, ok, count, ms, error }) => ({ name, ok, count, ms, error })),
+      engines: allEngines.map(({ name, ok, count, ms, error }) => ({ name, ok, count, ms, error })),
       results: fused.map((r, i) => ({
         rank: i + 1, title: r.title, url: r.url, snippet: r.snippet,
         score: +r.score.toFixed(4), engines: r.engines,
       })),
     }, null, 2));
   } else {
-    const engineLine = statuses
-      .map((s) => `${s.name}: ${s.ok ? s.count + " results" : "FAILED (" + s.error + ")"} in ${s.ms}ms`)
+    const engineLine = allEngines
+      .map((s) => `${s.name}: ${s.ok ? s.count + " results" : s.count === 0 && s.ms === 0 && s.error.startsWith("skipped") ? s.error : "FAILED (" + s.error + ")"} in ${s.ms}ms`)
       .join("\n  ");
     console.error(`engines:\n  ${engineLine}\n`);
     if (fused.length === 0) {
