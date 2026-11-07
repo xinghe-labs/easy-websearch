@@ -59,6 +59,13 @@ const names = d.engines.map(e => e.name);
 if (!names.includes('baidu') || names.includes('searxng')) process.exit(1);"
 check "baidu in default set, searxng hidden" $?
 
+node scripts/search.mjs "webgpu" -n 1 --json 2>/dev/null | json "
+const names = d.engines.map(e => e.name);
+for (const auto of ['wikipedia','stackexchange','github','hn','juejin','arxiv','mwmbl','csdn','openalex','crossref','pubmed','huggingface']) {
+  if (names.includes(auto)) process.exit(1);
+}"
+check "auto tier hidden from default pool" $?
+
 SEARXNG_BASE_URL=http://127.0.0.1:9 node scripts/search.mjs "test" -n 1 --json 2>/dev/null | json "
 const s = d.engines.find(e => e.name === 'searxng');
 if (!s || s.ok !== false) process.exit(1);"
@@ -84,6 +91,8 @@ import('./scripts/search.mjs').then(({ routeAuto }) => {
     ['github 教程', ['github']],
     ['论文 写作', ['arxiv']],
     ['什么是 webgpu', ['wikipedia']],
+    ['论文 写作', ['arxiv', 'openalex', 'crossref', 'pubmed']],
+    ['掘金 教程', ['juejin', 'csdn']],
     ['今天天气', []],
   ];
   for (const [q, expected] of cases) {

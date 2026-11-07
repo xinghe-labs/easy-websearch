@@ -1029,8 +1029,9 @@ function availableEngines(filter) {
   };
   const engines = Object.keys(ENGINES).filter((name) => {
     const e = ENGINES[name];
-    if (typeof e !== "object" || !e.backup) return isAvailable(name);
-    return false; // backups excluded from the default set
+    if (typeof e !== "object") return isAvailable(name);
+    if (e.backup || e.auto) return false; // backups + auto tier excluded from default
+    return isAvailable(name);
   });
   // Opt-in backups via env (comma-separated), e.g. EASY_WEB_SEARCH_ENGINES=anysearch,keenable
   const optIn = (process.env[BACKUP_ENGINES_ENV] || "")
