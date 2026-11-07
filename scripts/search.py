@@ -169,6 +169,46 @@ def _decode_bing_target(url):
         return None  # not decodable — keep the redirect URL
 
 
+def _looks_like_junk(results, query):
+    """Bing bot-junk guard: under automation pressure Bing serves HTTP 200
+    pages of unrelated results (observed: "webgpu" → Google homepage / Baidu
+    baike) instead of a clean failure. Detect the classic junk shapes and
+    fail soft — the cooldown + other engines take over."""
+    if len(results) < 2:
+        return False
+
+    def host_of(r):
+        try:
+            host = urllib.parse.urlsplit(r["url"]).hostname or r["url"]
+            return host.removeprefix("www.")
+        except ValueError:
+            return r["url"]
+
+    def path_of(r):
+        try:
+            return urllib.parse.urlsplit(r["url"]).path
+        except ValueError:
+            return None
+
+    # 1) every result on the same domain is a bot page, not an SERP
+    if len(results) >= 3 and len({host_of(r) for r in results}) == 1:
+        return True
+    # 2) real SERPs deep-link; a page of bare homepages is a bot page
+    root_count = sum(1 for r in results if path_of(r) in ("", "/"))
+    if len(results) >= 2 and root_count >= -(-len(results) * 4 // 5):
+        return True
+    # 3) latin-script queries: no query word appears in any title/url
+    words = re.findall(r"[a-z][a-z0-9+#.-]{2,}", query.lower())
+    if words:
+        any_hit = any(
+            any(w in f"{r['title']} {r['url']}".lower() for w in words)
+            for r in results
+        )
+        if not any_hit:
+            return True
+    return False
+
+
 def engine_bing(ctx):
     params = {"q": ctx["query"]}
     if ctx["lang"] == "zh":
@@ -176,7 +216,9 @@ def engine_bing(ctx):
     elif ctx["lang"] == "en":
         params.update({"mkt": "en-US", "setlang": "en"})
     status, body = http_text("https://www.bing.com/search?" + urllib.parse.urlencode(params),
-                             timeout=ctx["timeout"])
+                             timeout=ctx["timeout"],
+                             headers={"referer": "https://www.bing.com/",
+                                      "upgrade-insecure-requests": "1"})
     if status != 200:
         raise RuntimeError(f"HTTP {status}")
     results = []
@@ -190,6 +232,8 @@ def engine_bing(ctx):
         results.append({"title": title, "url": url, "snippet": snip})
     if not results:
         raise RuntimeError("no results parsed")
+    if _looks_like_junk(results, ctx["query"]):
+        raise RuntimeError("bot junk detected (results unrelated to query)")
     return results
 
 

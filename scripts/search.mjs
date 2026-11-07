@@ -246,11 +246,40 @@ async function engineDDG(ctx) {
   return results;
 }
 
+// Bing bot-junk guard: under automation pressure Bing serves HTTP 200 pages
+// of unrelated results (observed: "webgpu" → Google homepage / Baidu baike)
+// instead of a clean failure. Detect the classic junk shapes and fail soft —
+// the cooldown + other engines take over.
+function looksLikeJunk(results, query) {
+  if (results.length < 2) return false;
+  const hostOf = (r) => { try { return new URL(r.url).hostname.replace(/^www\./, ""); } catch { return r.url; } };
+  const pathOf = (r) => { try { return new URL(r.url).pathname; } catch { return null; } };
+  // 1) every result on the same domain is a bot page, not an SERP
+  const hosts = new Set(results.map(hostOf));
+  if (results.length >= 3 && hosts.size === 1) return true;
+  // 2) real SERPs deep-link; a page of bare homepages is a bot page
+  const rootCount = results.filter((r) => ["", "/"].includes(pathOf(r))).length;
+  if (results.length >= 2 && rootCount >= Math.ceil(results.length * 0.8)) return true;
+  // 3) latin-script queries: no query word appears in any title/url
+  const words = query.toLowerCase().match(/[a-z][a-z0-9+#.-]{2,}/g);
+  if (words && words.length) {
+    const anyHit = results.some((r) => {
+      const hay = `${r.title} ${r.url}`.toLowerCase();
+      return words.some((w) => hay.includes(w));
+    });
+    if (!anyHit) return true;
+  }
+  return false;
+}
+
 async function engineBing(ctx) {
   const params = new URLSearchParams({ q: ctx.query });
   if (ctx.lang === "zh") { params.set("mkt", "zh-CN"); params.set("setlang", "zh"); }
   else if (ctx.lang === "en") { params.set("mkt", "en-US"); params.set("setlang", "en"); }
-  const { status, body } = await fetchText(`https://www.bing.com/search?${params}`, { timeout: ctx.timeout });
+  const { status, body } = await fetchText(`https://www.bing.com/search?${params}`, {
+    timeout: ctx.timeout,
+    headers: { referer: "https://www.bing.com/", "upgrade-insecure-requests": "1" },
+  });
   if (status !== 200) throw new Error(`HTTP ${status}`);
   const results = [];
   const liRe = /<li class="b_algo"[\s\S]*?<h2>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>\s*<\/h2>([\s\S]*?)<\/li>/g;
@@ -272,6 +301,9 @@ async function engineBing(ctx) {
     results.push({ title, url, snippet: snip });
   }
   if (results.length === 0) throw new Error("no results parsed");
+  if (looksLikeJunk(results, ctx.query)) {
+    throw new Error("bot junk detected (results unrelated to query)");
+  }
   return results;
 }
 
@@ -638,4 +670,4 @@ import { pathToFileURL } from "node:url";
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) await main();
 
-export { ENGINES, availableEngines, parseArgs, buildQuery };
+export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk };
