@@ -52,16 +52,17 @@ export BOCHA_API_KEY=...      # https://open.bochaai.com       (Chinese web sear
 export METASO_API_KEY=...     # https://metaso.cn/search-api   (Chinese AI search)
 export LINKUP_API_KEY=...     # https://linkup.so              (sourced answers)
 export OLLAMA_API_KEY=...     # https://ollama.com             (web search API)
+export SEARXNG_BASE_URL=...   # self-hosted SearXNG (enable JSON in settings.yml)
 export ANYSEARCH_API_KEY=...  # optional; anonymous works with lower limits
 export KEENABLE_API_KEY=...   # optional; anonymous works with lower limits
 
-Keyless backup engines (anysearch, keenable) are OFF by default — their
-anonymous quotas are low. Opt in per-run with `--engine anysearch,keenable`
-or for the whole session with `export EASY_WEB_SEARCH_ENGINES=anysearch,keenable`.
-Use them when DDG/Bing are both degraded, or for extra coverage on hard queries.
+Keyless backup engines (anysearch, keenable, sogouweixin) are OFF by default.
+opt in per-run with `--engine sogouweixin` (WeChat articles — great for
+Chinese tech content) or for the session with
+`export EASY_WEB_SEARCH_ENGINES=sogouweixin`.
 
-Chinese-language queries get a boost from bocha/metaso (when configured) —
-both are domestic Chinese search engines.
+Chinese queries get baidu in the default pool (no key) — plus bocha/metaso
+when configured.
 ```
 
 If the user's environment has an HTTP(S)_PROXY set, both runtimes honor it

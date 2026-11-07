@@ -67,6 +67,59 @@ upgrade the engine pool automatically — see [Install](#install).
 | Runtime deps | — | often npm/pip | ✅ zero (Node ≥18 **or** Python ≥3.11 stdlib) |
 | Proxy-aware | varies | rarely | ✅ honors `HTTPS_PROXY` (incl. a CONNECT tunnel for Node `fetch`) |
 
+## Optional engine keys — 30 seconds each
+
+Every key is optional. Add one and its engine joins the search pool
+automatically. Fastest wins first:
+
+| Order | Engine | What it adds | Free | Sign up (direct link) |
+|---|---|---|---|---|
+| 1 | **Brave** | stable international results | 2,000/mo | [brave.com/search/api](https://brave.com/search/api/) → Free plan |
+| 2 | **Tavily** | LLM-friendly summaries | 1,000/mo | [app.tavily.com](https://app.tavily.com/) |
+| 3 | **Ollama** | one more solid source | free account | [ollama.com](https://ollama.com/) → Account → API keys |
+| 4 | **Bocha 博查** | best Chinese web results | grant (paid) | [open.bochaai.com](https://open.bochaai.com/) |
+| 5 | **Serper** | Google results | trial | [serper.dev](https://serper.dev/) |
+| 6 | **Exa** | semantic search | trial | [dashboard.exa.ai](https://dashboard.exa.ai/) |
+| 7 | **Firecrawl** | search + better `fetch` | trial | [firecrawl.dev](https://firecrawl.dev/) |
+| 8 | **Metaso 秘塔** | Chinese AI search | grant (paid) | [metaso.cn/search-api/api-keys](https://metaso.cn/search-api/api-keys) |
+| 9 | **Linkup** | sourced answers | free tier | [linkup.so](https://linkup.so/) |
+| — | AnySearch / Keenable | keyless backups (opt-in) | anonymous OK | [anysearch.com](https://anysearch.com/) / [keenable.ai](https://keenable.ai/) |
+
+Put keys in your agent's env (e.g. Claude Code `~/.claude/settings.json`):
+
+```json
+{ "env": { "BRAVE_API_KEY": "…", "TAVILY_API_KEY": "…" } }
+```
+
+Then `node scripts/doctor.mjs` — each missing key now prints where to get it.
+
+## Self-hosted SearXNG (unlimited, no keys)
+
+If you run [SearXNG](https://docs.searxng.org/) yourself (docker one-liner:
+`docker run -p 8080:8080 searxng/searxng`), point the skill at it:
+
+```bash
+export SEARXNG_BASE_URL=http://localhost:8080   # or https://searx.example.com
+```
+
+The `searxng` engine joins the pool automatically. Two requirements on the
+instance side:
+
+1. **JSON format enabled** — in `settings.yml`:
+   ```yaml
+   search:
+     formats:
+       - html
+       - json
+   ```
+   (If it's missing, doctor/search reports: `SearXNG rejected JSON — add
+   'json' to search.formats in settings.yml`.)
+2. **Reachability** — the skill honors `HTTPS_PROXY`; a local instance should
+   be reachable directly.
+
+A private instance gives you an unlimited engine with no API keys and no
+rate limits — a clean alternative to sharing accounts.
+
 ## Install
 
 ### Claude Code / any Agent Skills runtime

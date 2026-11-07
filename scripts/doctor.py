@@ -68,12 +68,28 @@ def main() -> None:
         cd = cooldown_state.get(name) or {}
         return f" [cooldown: {cd.get('reason', 'recent failure')}]" if cd.get("until", 0) > now_ms else ""
 
+    KEY_URLS = {
+        "BRAVE_API_KEY": "brave.com/search/api",
+        "TAVILY_API_KEY": "app.tavily.com",
+        "SERPER_API_KEY": "serper.dev",
+        "EXA_API_KEY": "dashboard.exa.ai",
+        "FIRECRAWL_API_KEY": "firecrawl.dev",
+        "BOCHA_API_KEY": "open.bochaai.com",
+        "METASO_API_KEY": "metaso.cn/search-api/api-keys",
+        "LINKUP_API_KEY": "linkup.so",
+        "OLLAMA_API_KEY": "ollama.com → Account → API keys",
+        "SEARXNG_BASE_URL": "self-hosted — see README SearXNG section",
+        "ANYSEARCH_API_KEY": "anysearch.com",
+        "KEENABLE_API_KEY": "keenable.ai",
+    }
+
     def probe(name: str) -> dict:
         fn, key, flags = ENGINES[name]
         optional_key = "optional_key" in flags
         backup = "backup" in flags
         if key and not env.get(key) and not optional_key:
-            return {"engine": name, "status": "SKIP", "ms": 0, "note": f"{key} not set"}
+            where = f" — get it: {KEY_URLS[key]}" if key in KEY_URLS else ""
+            return {"engine": name, "status": "SKIP", "ms": 0, "note": f"{key} not set{where}"}
         t0 = time.time()
         try:
             results = fn(ctx)

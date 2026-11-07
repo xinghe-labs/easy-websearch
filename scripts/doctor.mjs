@@ -45,6 +45,23 @@ const cooldownNote = (name) => {
   return cd?.until > Date.now() ? ` [cooldown: ${cd.reason || "recent failure"}]` : "";
 };
 
+// Where to apply for each engine's key (shown in SKIP notes — BYOK friction
+// should be near zero).
+const KEY_URLS = {
+  BRAVE_API_KEY: "brave.com/search/api",
+  TAVILY_API_KEY: "app.tavily.com",
+  SERPER_API_KEY: "serper.dev",
+  EXA_API_KEY: "dashboard.exa.ai",
+  FIRECRAWL_API_KEY: "firecrawl.dev",
+  BOCHA_API_KEY: "open.bochaai.com",
+  METASO_API_KEY: "metaso.cn/search-api/api-keys",
+  LINKUP_API_KEY: "linkup.so",
+  OLLAMA_API_KEY: "ollama.com → Account → API keys",
+  SEARXNG_BASE_URL: "self-hosted — see README SearXNG section",
+  ANYSEARCH_API_KEY: "anysearch.com",
+  KEENABLE_API_KEY: "keenable.ai",
+};
+
 const rows = await Promise.all(ALL.map(async (name) => {
   const e = ENGINES[name];
   const key = typeof e === "function" ? null : e.key;
@@ -53,7 +70,8 @@ const rows = await Promise.all(ALL.map(async (name) => {
   const keyMissing = key && !process.env[key] && !optionalKey;
   const enabled = defaultSet.includes(name) || optIn.includes(name);
   if (keyMissing) {
-    return { engine: name, status: "SKIP", ms: 0, note: `${key} not set` };
+    const where = KEY_URLS[key] ? ` — get it: ${KEY_URLS[key]}` : "";
+    return { engine: name, status: "SKIP", ms: 0, note: `${key} not set${where}` };
   }
   const t0 = Date.now();
   try {

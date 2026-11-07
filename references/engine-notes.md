@@ -61,3 +61,30 @@ Failure cooldown (v1.2): failed engines are recorded in
 `$XDG_CACHE_HOME/easy-websearch/cooldowns.json` and skipped for 10 min on
 default runs (never skip to zero; `--engine`/`--no-cooldown` bypass). This
 stops a rate-limited engine from burning every subsequent request.
+
+## No-key baseline expansion (v1.5)
+
+Probed 2026-11-07 (proxied CN network + direct):
+
+| Engine | Verdict | Evidence |
+|---|---|---|
+| Baidu | ✅ default pool | 200 OK, 7+ relevant `<h3><a>` results, no captcha; needs referer. `/link` wrappers resolved to real URLs (200-required, retry once — first hit often 403). Bot-junk guard armed. |
+| Sogou Weixin | ✅ opt-in vertical | `weixin.sogou.com/weixin?type=2` stable x3, no captcha; 10 WeChat articles/query. `/link` needs SNUID cookie (shared jar) + JS-stub decode (`url += '…'` fragments). WeChat-articles-only. |
+| Startpage | ❌ dropped | POST /sp/search → 302 to `/sp/captcha-block` (datacenter-IP block). |
+| Mojeek | ❌ dropped | 403 Forbidden (proxy and direct). |
+| Marginalia | ❌ dropped | API endpoint 404; HTML SERP yields ~2 external links/query — too weak. |
+
+## SearXNG (self-hosted, v1.5)
+
+`SEARXNG_BASE_URL` env activates the `searxng` engine (keyed-style: engine
+joins automatically when the env var is set). Instance must enable JSON:
+`search.formats: [html, json]` in settings.yml — otherwise the engine fails
+with an explicit hint. Supports `--lang zh|en` via the `language` param.
+
+## Cookie jar (v1.5)
+
+Both runtimes keep a process-lifetime cookie jar (node: Map host→cookies,
+injected into outgoing requests + stored from Set-Cookie; python: stdlib
+CookieJar via HTTPCookieProcessor). Primary driver: Sogou /link requires
+SNUID from the search response. Side benefit: more browser-like to anti-bot
+layers everywhere.

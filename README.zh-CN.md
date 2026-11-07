@@ -69,6 +69,55 @@ key（Brave/Tavily/Serper/Exa/Firecrawl/Bocha/Metaso/Linkup/Ollama）会自动
 | 运行时依赖 | — | 常 npm/pip | ✅ 零依赖（Node ≥18 **或** Python ≥3.11 标准库） |
 | 代理感知 | 不一定 | 很少 | ✅ 读取 `HTTPS_PROXY`（Node 内置 CONNECT 隧道） |
 
+## 可选 key — 每个 30 秒
+
+所有 key 都可选。配一个，对应引擎自动加入搜索池。按性价比排序：
+
+| 顺序 | 引擎 | 带来什么 | 免费额度 | 注册直达 |
+|---|---|---|---|---|
+| 1 | **Brave** | 稳定的国际搜索 | 2,000 次/月 | [brave.com/search/api](https://brave.com/search/api/) → Free 计划 |
+| 2 | **Tavily** | LLM 友好摘要 | 1,000 次/月 | [app.tavily.com](https://app.tavily.com/) |
+| 3 | **Ollama** | 多一个稳定源 | 免费账号 | [ollama.com](https://ollama.com/) → Account → API keys |
+| 4 | **博查 Bocha** | 最强中文网页搜索 | 新客额度（付费） | [open.bochaai.com](https://open.bochaai.com/) |
+| 5 | **Serper** | Google 结果 | 试用额度 | [serper.dev](https://serper.dev/) |
+| 6 | **Exa** | 语义搜索 | 试用额度 | [dashboard.exa.ai](https://dashboard.exa.ai/) |
+| 7 | **Firecrawl** | 搜索 + fetch 抓取升级 | 试用额度 | [firecrawl.dev](https://firecrawl.dev/) |
+| 8 | **秘塔 Metaso** | 中文 AI 搜索 | 新客额度（付费） | [metaso.cn/search-api/api-keys](https://metaso.cn/search-api/api-keys) |
+| 9 | **Linkup** | 带引用的回答 | 免费额度 | [linkup.so](https://linkup.so/) |
+| — | AnySearch / Keenable | 免 key 备援（需 opt-in） | 匿名可用 | [anysearch.com](https://anysearch.com/) / [keenable.ai](https://keenable.ai/) |
+
+key 放进 agent 的环境变量（如 Claude Code 的 `~/.claude/settings.json`）：
+
+```json
+{ "env": { "BRAVE_API_KEY": "…", "TAVILY_API_KEY": "…" } }
+```
+
+然后 `node scripts/doctor.mjs` —— 每个缺失的 key 现在都会显示去哪申请。
+
+## 自建 SearXNG（无配额、无 key）
+
+如果你自己跑 [SearXNG](https://docs.searxng.org/)（docker 一行：
+`docker run -p 8080:8080 searxng/searxng`），把 skill 指向它：
+
+```bash
+export SEARXNG_BASE_URL=http://localhost:8080   # 或 https://searx.example.com
+```
+
+`searxng` 引擎自动加入。实例侧两个要求：
+
+1. **开启 JSON 格式** —— 在 `settings.yml`：
+   ```yaml
+   search:
+     formats:
+       - html
+       - json
+   ```
+   （缺了的话，doctor/搜索会提示：`SearXNG rejected JSON — add
+   'json' to search.formats in settings.yml`。）
+2. **可达性** —— skill 会遵守 `HTTPS_PROXY`；本地实例应直连可达。
+
+私有实例 = 无配额、无 API key 的额外引擎，也是替代“共享账号”的干净方案。
+
 ## 安装
 
 ### Claude Code / 任何支持 Agent Skills 的工具
