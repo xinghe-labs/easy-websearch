@@ -688,6 +688,7 @@ def _searxng_base_and_auth(raw):
 # ── Vertical engines (official keyless APIs) — auto-activated by query intent ──
 
 def engine_wikipedia(ctx):
+    query = ctx.get("intl_query") or ctx["query"]
     cjk = bool(re.search(r"[\u4e00-\u9fa5]", ctx["query"]))
     lang = ctx["lang"] if ctx["lang"] in ("zh", "en") else ("zh" if cjk else "en")
     params = {"action": "query", "list": "search", "srsearch": ctx["query"],
@@ -704,6 +705,7 @@ def engine_wikipedia(ctx):
 
 
 def engine_stack_exchange(ctx):
+    query = ctx.get("intl_query") or ctx["query"]
     params = {"intitle": ctx["query"], "site": "stackoverflow",
               "pagesize": str(min(ctx["n"], 10))}
     status, body = http_text("https://api.stackexchange.com/2.3/search/excerpts?" + urllib.parse.urlencode(params),
@@ -718,6 +720,7 @@ def engine_stack_exchange(ctx):
 
 
 def engine_hn(ctx):
+    query = ctx.get("intl_query") or ctx["query"]
     params = {"query": ctx["query"], "hitsPerPage": str(min(ctx["n"], 10))}
     status, body = http_text("https://hn.algolia.com/api/v1/search?" + urllib.parse.urlencode(params),
                              timeout=ctx["timeout"], headers={"accept": "application/json"})
@@ -735,6 +738,7 @@ def engine_hn(ctx):
 
 
 def engine_github(ctx):
+    query = ctx.get("intl_query") or ctx["query"]
     params = {"q": ctx["query"], "per_page": str(min(ctx["n"], 10))}
     status, body = http_text("https://api.github.com/search/repositories?" + urllib.parse.urlencode(params),
                              timeout=ctx["timeout"],
@@ -750,6 +754,7 @@ def engine_github(ctx):
 
 
 def engine_juejin(ctx):
+    query = ctx.get("intl_query") or ctx["query"]
     params = {"query": ctx["query"], "id_type": "0", "cursor": "0",
               "limit": str(min(ctx["n"], 10))}
     status, body = http_text("https://api.juejin.cn/search_api/v1/search?" + urllib.parse.urlencode(params),
@@ -773,6 +778,7 @@ def engine_juejin(ctx):
 
 
 def engine_arxiv(ctx):
+    query = ctx.get("intl_query") or ctx["query"]
     params = {"search_query": f"all:{ctx['query']}", "max_results": str(min(ctx["n"], 10))}
     status, body = http_text("http://export.arxiv.org/api/query?" + urllib.parse.urlencode(params),
                              timeout=ctx["timeout"])
@@ -834,6 +840,100 @@ def engine_searxng(ctx):
              "snippet": (r.get("content") or "")[:400]} for r in items if r.get("url")]
 
 
+def engine_csdn(ctx):
+    query = ctx.get("intl_query") or ctx["query"]
+    params = {"q": query, "t": "blog", "p": "1"}
+    status, body = http_text("https://so.csdn.net/api/v3/search?" + urllib.parse.urlencode(params),
+                             timeout=ctx["timeout"], direct=True,
+                             headers={"accept": "application/json", "referer": "https://www.csdn.net/"})
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    items = parse_json(body).get("result_vos", [])
+    return [{"title": strip_tags(r["title"]), "url": r["url"],
+             "snippet": strip_tags(r.get("description", ""))[:300]}
+            for r in items[: ctx["n"]] if r.get("url") and r.get("title")]
+
+
+def engine_openalex(ctx):
+    query = ctx.get("intl_query") or ctx["query"]
+    params = {"search": query, "per-page": str(min(ctx["n"], 10))}
+    status, body = http_text("https://api.openalex.org/works?" + urllib.parse.urlencode(params),
+                             timeout=ctx["timeout"], headers={"accept": "application/json"})
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    items = parse_json(body).get("results", [])
+    out = []
+    for r in items:
+        doi_link = (f"https://doi.org/{re.sub(chr(94) + r'https?://doi[.]org/', '', r['doi'])}"
+                    if r.get("doi") else r.get("id", ""))
+        venue = (r.get("primary_location") or {}).get("source", {}).get("display_name", "")
+        out.append({"title": r.get("display_name") or doi_link, "url": doi_link,
+                    "snippet": " · ".join(filter(None, [str(r.get("publication_year", "")), venue]))})
+    return [r for r in out if r["url"].startswith("http")]
+
+
+def engine_crossref(ctx):
+    query = ctx.get("intl_query") or ctx["query"]
+    params = {"query": query, "rows": str(min(ctx["n"], 10))}
+    status, body = http_text("https://api.crossref.org/works?" + urllib.parse.urlencode(params),
+                             timeout=ctx["timeout"], headers={"accept": "application/json"})
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    items = parse_json(body).get("message", {}).get("items", [])
+    out = []
+    for r in items:
+        title = (r.get("title") or [""])[0]
+        doi = r.get("DOI", "")
+        url = r.get("URL") or (f"https://doi.org/{doi}" if doi else "")
+        venue = (r.get("container-title") or [""])[0] or r.get("publisher", "")
+        year = ((r.get("issued") or {}).get("date-parts") or [[None]])[0][0] or ""
+        out.append({"title": title, "url": url, "snippet": " · ".join(filter(None, [str(year), venue]))})
+    return [r for r in out if r["url"] and r["title"]]
+
+
+def engine_pubmed(ctx):
+    query = ctx.get("intl_query") or ctx["query"]
+    base = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+    params = {"db": "pubmed", "term": query, "retmode": "json", "retmax": str(min(ctx["n"], 10))}
+    status, body = http_text(f"{base}/esearch.fcgi?{urllib.parse.urlencode(params)}",
+                             timeout=ctx["timeout"], headers={"accept": "application/json"})
+    if status != 200:
+        raise RuntimeError(f"esearch HTTP {status}")
+    ids = parse_json(body).get("esearchresult", {}).get("idlist", [])
+    if not ids:
+        return []
+    params2 = {"db": "pubmed", "id": ",".join(ids), "retmode": "json"}
+    status, body = http_text(f"{base}/esummary.fcgi?{urllib.parse.urlencode(params2)}",
+                             timeout=ctx["timeout"], headers={"accept": "application/json"})
+    if status != 200:
+        raise RuntimeError(f"esummary HTTP {status}")
+    res = parse_json(body).get("result", {})
+    out = []
+    for uid in res.get("uids", []):
+        doc = res[uid]
+        out.append({"title": strip_tags(doc.get("title", "")),
+                    "url": f"https://pubmed.ncbi.nlm.nih.gov/{uid}/",
+                    "snippet": " · ".join(filter(None, [doc.get("pubdate", ""), doc.get("source", "")]))})
+    return out
+
+
+def engine_huggingface(ctx):
+    query = ctx.get("intl_query") or ctx["query"]
+    params = {"search": query, "limit": str(min(ctx["n"], 10))}
+    status, body = http_text("https://huggingface.co/api/models?" + urllib.parse.urlencode(params),
+                             timeout=ctx["timeout"], headers={"accept": "application/json"})
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    items = parse_json(body) or []
+    out = []
+    for r in items[: ctx["n"]]:
+        out.append({"title": r.get("id") or r.get("modelId"),
+                    "url": f"https://huggingface.co/{r['id']}",
+                    "snippet": " · ".join(filter(None, [r.get("pipeline_tag"),
+                        f"{r.get('downloads', 0)} downloads", f"{r.get('likes', 0)} likes"]))})
+    return out
+
+
 # (name, engine_fn, env_key, flags): baseline engines run by default; keyed
 # engines join when their key exists; backup engines also need an explicit
 # opt-in (--engine or EASY_WEB_SEARCH_ENGINES) because anonymous quotas are low.
@@ -857,6 +957,11 @@ ENGINES = {
     "juejin": (engine_juejin, None, frozenset({"auto"})),
     "arxiv": (engine_arxiv, None, frozenset({"auto"})),
     "mwmbl": (engine_mwmbl, None, frozenset({"auto"})),
+    "csdn": (engine_csdn, None, frozenset({"auto"})),
+    "openalex": (engine_openalex, None, frozenset({"auto"})),
+    "crossref": (engine_crossref, None, frozenset({"auto"})),
+    "pubmed": (engine_pubmed, None, frozenset({"auto"})),
+    "huggingface": (engine_huggingface, None, frozenset({"auto"})),
     "baidu": (engine_baidu, None, frozenset()),
     "sogouweb": (engine_sogou_web, None, frozenset()),
     "so360": (engine_so360, None, frozenset()),
@@ -868,7 +973,14 @@ ENGINES = {
 BACKUP_ENGINES_ENV = "EASY_WEB_SEARCH_ENGINES"
 
 
-def route_auto(query: str) -> list:
+def _extract_intl_query(query: str) -> str:
+    """Extract the longest ASCII keyword run."""
+    runs = re.findall(r'[A-Za-z][A-Za-z0-9+#./\/_ -]{2,}', query)
+    cleaned = [r.strip() for r in runs if len(r.strip()) >= 3]
+    return max(cleaned, key=len) if cleaned else query
+
+
+def route_auto(query: str) -> dict:
     """Query-intent routing: auto tier engines join on strong signals only."""
     add = []
     q = query.lower()
@@ -877,14 +989,16 @@ def route_auto(query: str) -> list:
     if re.search(r"stackoverflow|stack\s?exchange|报错|exception|traceback|怎么解决|how to (fix|debug)", q):
         add.append("stackexchange")
     if re.search(r"论文|文献|arxiv|学术|research paper|preprint", q):
-        add.append("arxiv")
+        add.extend(["arxiv", "openalex", "crossref", "pubmed"])
     if re.search(r"什么是|百科|维基百科|wikipedia|是谁|who is|history of", q):
         add.append("wikipedia")
     if re.search(r"hacker\s?news|show\s?hn|tech news|科技新闻", q):
         add.append("hn")
-    if re.search(r"掘金|juejin|前端开发|javascript 教程|vue\b|react\b", q):
-        add.append("juejin")
-    return add
+    if re.search(r"掘金|juejin|csdn|前端开发|javascript 教程|vue\b|react\b", q):
+        add.extend(["juejin", "csdn"])
+    if re.search(r"huggingface|数据集|dataset|模型权重|model weights|safetensors|embedding 模型", q):
+        add.append("huggingface")
+    return {"engines": add, "intl_query": _extract_intl_query(query)}
 
 
 def available_engines(filter_str, env):
@@ -897,7 +1011,9 @@ def available_engines(filter_str, env):
         return key is None or env.get(key) or "optional_key" in flags
 
     engines = [name for name in ENGINES
-               if "backup" not in ENGINES[name][2] and usable(name)]
+               if "backup" not in ENGINES[name][2]
+               and "auto" not in ENGINES[name][2]
+               and usable(name)]
     # Opt-in backups via env (comma-separated), e.g. EASY_WEB_SEARCH_ENGINES=anysearch,keenable
     opt_in = [s.strip() for s in os.environ.get(BACKUP_ENGINES_ENV, "").split(",")
               if s.strip() in ENGINES and "backup" in ENGINES[s.strip()][2]]
@@ -1002,11 +1118,15 @@ def main():
     in_cooldown = [n for n in names if state.get(n, {}).get("until", 0) > now_ms]
     cooldown_skipped = []
     if not args.engine:
-        for n in route_auto(ctx["query"]):
-            if n not in [e[0] for e in engines] and (n, ENGINES[n][0]) not in engines:
-                fn = ENGINES[n][0]
-                if (n, fn) not in engines:
-                    engines.append((n, fn))
+        routed = route_auto(ctx["query"])
+        for n in routed["engines"]:
+            if n not in [e[0] for e in engines] and n in ENGINES:
+                engines.append((n, ENGINES[n][0]))
+        if routed["engines"]:
+            ctx["intl_query"] = routed["intl_query"]
+            ctx["query"] = routed["intl_query"]
+    elif args.no_cooldown:
+        pass  # --no-cooldown implies skip routing too (clean state)
     if not args.engine and in_cooldown and len(in_cooldown) < len(engines):
         for n in in_cooldown:
             cooldown_skipped.append({"name": n, "ok": False, "count": 0, "ms": 0,

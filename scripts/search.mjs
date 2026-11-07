@@ -841,13 +841,103 @@ async function engineMwmbl(ctx) {
     }));
 }
 
+// ── Academic / registry engines (official keyless APIs) — auto tier ──
+
+async function engineCSDN(ctx) {
+  const params = new URLSearchParams({ q: ctx.query, t: "blog", p: "1" });
+  const { status, body } = await fetchText(`https://so.csdn.net/api/v3/search?${params}`, {
+    timeout: ctx.timeout,
+    headers: { accept: "application/json", referer: "https://www.csdn.net/" },
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const items = parseJson(body)?.result_vos || [];
+  return items.slice(0, ctx.n)
+    .filter((r) => r.url && r.title)
+    .map((r) => ({
+      title: stripTags(r.title),
+      url: r.url,
+      snippet: stripTags(r.description || "").slice(0, 300),
+    }));
+}
+
+async function engineOpenAlex(ctx) {
+  const params = new URLSearchParams({ search: ctx.query, "per-page": String(Math.min(ctx.n, 10)) });
+  const { status, body } = await fetchText(`https://api.openalex.org/works?${params}`, {
+    timeout: ctx.timeout, headers: { accept: "application/json" },
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const items = parseJson(body)?.results || [];
+  return items.map((r) => {
+    const doiLink = r.doi ? `https://doi.org/${String(r.doi).replace(/^https?:\/\/doi\.org\//, "")}` : String(r.id || "");
+    const venue = r.primary_location?.source?.display_name || "";
+    return {
+      title: r.display_name || doiLink,
+      url: doiLink,
+      snippet: [r.publication_year, venue].filter(Boolean).join(" · "),
+    };
+  }).filter((r) => r.url.startsWith("http"));
+}
+
+async function engineCrossref(ctx) {
+  const params = new URLSearchParams({ query: ctx.query, rows: String(Math.min(ctx.n, 10)) });
+  const { status, body } = await fetchText(`https://api.crossref.org/works?${params}`, {
+    timeout: ctx.timeout, headers: { accept: "application/json" },
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const items = parseJson(body)?.message?.items || [];
+  return items.map((r) => {
+    const title = (r.title || [])[0] || "";
+    const url = r.URL || (r.DOI ? `https://doi.org/${r.DOI}` : "");
+    const venue = (r["container-title"] || [])[0] || r.publisher || "";
+    const year = ((r.issued || {})["date-parts"] || [[]])[0][0] || "";
+    return { title, url, snippet: [year, venue].filter(Boolean).join(" · ") };
+  }).filter((r) => r.url && r.title);
+}
+
+async function enginePubMed(ctx) {
+  const base = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
+  const headers = { accept: "application/json" };
+  const sparams = new URLSearchParams({ db: "pubmed", term: ctx.query, retmode: "json", retmax: String(Math.min(ctx.n, 10)) });
+  const s1 = await fetchText(`${base}/esearch.fcgi?${sparams}`, { timeout: ctx.timeout, headers });
+  if (s1.status !== 200) throw new Error(`esearch HTTP ${s1.status}`);
+  const ids = parseJson(s1.body)?.esearchresult?.idlist || [];
+  if (ids.length === 0) return [];
+  const sparams2 = new URLSearchParams({ db: "pubmed", id: ids.join(","), retmode: "json" });
+  const s2 = await fetchText(`${base}/esummary.fcgi?${sparams2}`, { timeout: ctx.timeout, headers });
+  if (s2.status !== 200) throw new Error(`esummary HTTP ${s2.status}`);
+  const res = parseJson(s2.body)?.result || {};
+  return (res.uids || []).map((uid) => {
+    const doc = res[uid] || {};
+    return {
+      title: stripTags(doc.title || ""),
+      url: `https://pubmed.ncbi.nlm.nih.gov/${uid}/`,
+      snippet: [doc.pubdate, doc.source].filter(Boolean).join(" · "),
+    };
+  });
+}
+
+async function engineHuggingFace(ctx) {
+  const params = new URLSearchParams({ search: ctx.query, limit: String(Math.min(ctx.n, 10)) });
+  const { status, body } = await fetchText(`https://huggingface.co/api/models?${params}`, {
+    timeout: ctx.timeout, headers: { accept: "application/json" },
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const items = parseJson(body) || [];
+  return items.slice(0, ctx.n).map((r) => ({
+    title: r.id || r.modelId,
+    url: `https://huggingface.co/${r.id}`,
+    snippet: [r.pipeline_tag, `${r.downloads ?? 0} downloads`, `${r.likes ?? 0} likes`].filter(Boolean).join(" · "),
+  }));
+}
+
 async function engineSearxng(ctx) {
   if (!process.env.SEARXNG_BASE_URL) {
     throw new Error("SEARXNG_BASE_URL not set — see README SearXNG section");
   }
   const { base, authorization } = searxngBaseAndAuth(process.env.SEARXNG_BASE_URL);
   const params = new URLSearchParams({ q: ctx.query, format: "json" });
-  if (ctx.lang === "zh") params.set("language", "zh-CN");
+  // HF 无中文界面: lang=zh 时仍用英文搜索(0 结果是 HF 侧现实)
+  if (ctx.lang === "en") params.set("language", "en");
   else if (ctx.lang === "en") params.set("language", "en");
   const { status, body } = await fetchText(`${base}/search?${params.toString()}`, {
     timeout: ctx.timeout,
@@ -887,6 +977,12 @@ const ENGINES = {
   juejin: { fn: engineJuejin, key: null, auto: true },
   arxiv: { fn: engineArxiv, key: null, auto: true },
   mwmbl: { fn: engineMwmbl, key: null, auto: true },
+  // ── Academic / registry (official keyless APIs) — auto tier ──
+  csdn: { fn: engineCSDN, key: null, auto: true },
+  openalex: { fn: engineOpenAlex, key: null, auto: true },
+  crossref: { fn: engineCrossref, key: null, auto: true },
+  pubmed: { fn: enginePubMed, key: null, auto: true },
+  huggingface: { fn: engineHuggingFace, key: null, auto: true },
   // Keyless backup engines: anonymous quotas are low, so they stay OFF by
   // default. Opt in via --engine or the EASY_WEB_SEARCH_ENGINES env var.
   anysearch: { fn: engineAnysearch, key: "ANYSEARCH_API_KEY", optionalKey: true, backup: true },
@@ -899,16 +995,25 @@ const BACKUP_ENGINES_ENV = "EASY_WEB_SEARCH_ENGINES";
 
 // Query-intent routing: auto tier engines join on strong signals only.
 // Conservative patterns — false positives burn quota (github/stackexchange).
+// Extract the longest ASCII keyword run — vertical engines index English.
+function extractIntlQuery(query) {
+  const runs = query.match(/[A-Za-z][A-Za-z0-9+#.\\/_ -]{2,}/g) || [];
+  const cleaned = runs.map((r) => r.trim()).filter((r) => r.length >= 3);
+  if (!cleaned.length) return query;
+  return cleaned.sort((a, b) => b.length - a.length)[0];
+}
+
 function routeAuto(query) {
   const add = [];
   const q = query.toLowerCase();
   if (/(github|gitee|开源仓库|源码|repo\b|open[- ]?source)/.test(q)) add.push("github");
   if (/(stackoverflow|stack\s?exchange|报错|exception|traceback|怎么解决|how to (fix|debug))/.test(q)) add.push("stackexchange");
-  if (/(论文|文献|arxiv|学术|research paper|preprint)/.test(q)) add.push("arxiv");
+  if (/(论文|文献|arxiv|学术|research paper|preprint)/.test(q)) add.push("arxiv", "openalex", "crossref", "pubmed");
   if (/(什么是|百科|维基百科|wikipedia|是谁|who is|history of)/.test(q)) add.push("wikipedia");
   if (/(hacker\s?news|show\s?hn|tech news|科技新闻)/.test(q)) add.push("hn");
-  if (/(掘金|juejin|前端开发|javascript 教程|vue\b|react\b)/.test(q)) add.push("juejin");
-  return add;
+  if (/(掘金|juejin|csdn|前端开发|javascript 教程|vue\b|react\b)/.test(q)) add.push("juejin", "csdn");
+  if (/(huggingface|数据集|dataset|模型权重|model weights|safetensors|embedding 模型)/.test(q)) add.push("huggingface");
+  return { engines: add, intlQuery: extractIntlQuery(query) };
 }
 
 function availableEngines(filter) {
@@ -1004,9 +1109,11 @@ async function main() {
   // Query-intent routing: auto tier joins only on strong signals (default
   // selection only; explicit --engine overrides the whole list anyway).
   if (!args.engines) {
-    for (const n of routeAuto(ctx.query)) {
+    const routed = routeAuto(ctx.query);
+    for (const n of routed.engines) {
       if (!engines.includes(n)) engines.push(n);
     }
+    if (routed.engines.length) { ctx.intlQuery = routed.intlQuery; ctx.query = routed.intlQuery; }
   }
 
   // Skip engines in active cooldown (default selection only; explicit
@@ -1093,4 +1200,4 @@ import { pathToFileURL } from "node:url";
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) await main();
 
-export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk, cooldownPath, searxngBaseAndAuth, setForceDirect, routeAuto };
+export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk, cooldownPath, searxngBaseAndAuth, setForceDirect, routeAuto, extractIntlQuery };
