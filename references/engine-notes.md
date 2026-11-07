@@ -88,3 +88,15 @@ injected into outgoing requests + stored from Set-Cookie; python: stdlib
 CookieJar via HTTPCookieProcessor). Primary driver: Sogou /link requires
 SNUID from the search response. Side benefit: more browser-like to anti-bot
 layers everywhere.
+
+### Baidu/Sogou WAF fingerprint sensitivity (v1.5 addendum)
+
+After heavy same-day testing, Baidu serves its security-verification page to
+the python-urllib fingerprint while node requests keep passing from the same
+IP (Connection: close + header casing differences are the likely triggers).
+Both engines fail soft. Recommendation: CN engines (baidu/sogouweixin) are
+most reliable on the node runtime; python users should expect intermittent
+`no results parsed` / captcha failures — other engines cover, cooldown
+absorbs. Also: these engines + searxng now bypass user proxies entirely
+(`direct=True`), since datacenter proxy exits get blocked by CN anti-bot
+layers immediately.

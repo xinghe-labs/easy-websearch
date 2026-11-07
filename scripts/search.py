@@ -32,11 +32,21 @@ import time
 import urllib.error
 import urllib.parse
 from http.cookiejar import CookieJar
-from urllib.request import BaseHandler, HTTPCookieProcessor, build_opener
+from urllib.request import BaseHandler, HTTPCookieProcessor, ProxyHandler, build_opener
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 RRF_K = 60
+
+
+_DIRECT_HOSTS = ("baidu.com", "weixin.sogou.com", "sogou.com",
+                 "localhost", "127.0.0.1", "::1")
+
+
+def _force_direct(url: str) -> bool:
+    """CN engines and self-hosted/localhost targets must bypass user proxies."""
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    return any(host == h or host.endswith("." + h) for h in _DIRECT_HOSTS)
 
 
 class _HeaderInjector(BaseHandler):
@@ -74,8 +84,13 @@ COOKIE_JAR = CookieJar()
 
 
 def http_text(url: str, method: str = "GET", headers: dict | None = None,
-              data: bytes | None = None, timeout: float = 8) -> tuple[int, str]:
-    """Fetch an http(s) URL, return (status, body). Honors proxy env vars."""
+              data: bytes | None = None, timeout: float = 8,
+              direct: bool = False) -> tuple[int, str]:
+    """Fetch an http(s) URL, return (status, body).
+
+    Honors proxy env vars unless `direct` — Chinese engines (baidu/sogou) and
+    self-hosted instances must bypass user proxies: proxy exit IPs are
+    datacenter-rated and get blocked by CN anti-bot layers (observed)."""
     # Explicit scheme allowlist: only plain http(s) URLs may reach the opener.
     if not url.lower().startswith(("http://", "https://")):
         raise RuntimeError(f"disallowed URL scheme (want http/https): {url[:80]}")
@@ -94,7 +109,7 @@ def http_text(url: str, method: str = "GET", headers: dict | None = None,
     # `Content-Type: application/x-www-form-urlencoded` for data-bearing
     # requests runs first and addheaders lose to it (observed: Bocha 415).
     # A handler registered after the defaults overwrites that header.
-    opener = build_opener()
+    opener = build_opener(ProxyHandler({})) if direct else build_opener()
     opener.add_handler(_HeaderInjector(merged))
     opener.add_handler(HTTPCookieProcessor(COOKIE_JAR))
     try:
@@ -117,7 +132,7 @@ def http_text_final(url: str, headers: dict | None = None,
         "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
         **(headers or {}),
     }
-    opener = build_opener()
+    opener = build_opener(ProxyHandler({})) if _force_direct(url) else build_opener()
     opener.add_handler(_HeaderInjector(merged))
     opener.add_handler(HTTPCookieProcessor(COOKIE_JAR))
     try:
@@ -492,7 +507,7 @@ def _resolve_redirect(url: str, timeout: float) -> str:
 def engine_baidu(ctx):
     params = {"wd": ctx["query"], "rn": str(min(max(ctx["n"], 1), 20))}
     status, body = http_text("https://www.baidu.com/s?" + urllib.parse.urlencode(params),
-                             timeout=ctx["timeout"],
+                             timeout=ctx["timeout"], direct=True,
                              headers={"referer": "https://www.baidu.com/"})
     if status != 200:
         raise RuntimeError(f"HTTP {status}")
@@ -525,7 +540,7 @@ def _resolve_sogou_links(urls, timeout):
             continue
         try:
             full = urllib.parse.urljoin("https://weixin.sogou.com", u)
-            _, body = http_text(full, timeout=min(timeout, 4))
+            _, body = http_text(full, timeout=min(timeout, 4), direct=True)
             # Stub:  url += 'https://mp.';  url += 'weixin.qq.c';  …
             target = "".join(m.group(1) for m in
                              re.finditer(r"url\s*\+=\s*'([^']*)'", body))
@@ -546,7 +561,7 @@ def _resolve_sogou_links(urls, timeout):
 def engine_sogou_weixin(ctx):
     params = {"type": "2", "query": ctx["query"]}
     status, body = http_text("https://weixin.sogou.com/weixin?" + urllib.parse.urlencode(params),
-                             timeout=ctx["timeout"],
+                             timeout=ctx["timeout"], direct=True,
                              headers={"referer": "https://weixin.sogou.com/"})
     if status != 200:
         raise RuntimeError(f"HTTP {status}")
@@ -595,7 +610,7 @@ def engine_searxng(ctx):
     if authorization:
         extra["authorization"] = authorization
     status, body = http_text(f"{base}/search?{urllib.parse.urlencode(params)}",
-                             timeout=ctx["timeout"],
+                             timeout=ctx["timeout"], direct=True,
                              headers=extra)
     if status == 403:
         raise RuntimeError("SearXNG rejected JSON — add 'json' to search.formats in settings.yml")
