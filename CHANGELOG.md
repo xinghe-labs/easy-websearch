@@ -65,6 +65,23 @@ UX-review fixes (see [`docs/ux-review-2026-11-07.md`](docs/ux-review-2026-11-07.
   per-engine status, URL→Markdown page reader, zero dependencies
   (Node or Python stdlib)
 
+## [1.7.0] — 2026-11-07
+
+- **7 个垂直引擎**（官方免 key API，双运行时）：wikipedia / stackexchange /
+  hn / github / 掘金 juejin / arxiv / mwmbl —— 官方 API 免疫反爬，可用性有保障
+- **查询意图路由**：code→github、报错→stackexchange、论文→arxiv、
+  什么是→wikipedia、科技新闻→hn、掘金/前端→juejin（保守模式，仅强信号触发，
+  避免烧配额）；路由函数导出可单测
+- **SearXNG basic-auth 支持**：`SEARXNG_BASE_URL=https://user:pass@host`
+  （Caddy/nginx 鉴权实例可用；node fetch 拒绝 userinfo URL、py urllib 解析
+  错误 —— 双运行时改为显式提取凭据发送 Authorization 头，httpbin 实测）
+- **wikipedia 引擎超时加长**（1.5×，≥12s）：慢代理路径实测 5-9s，通用 8s
+  超时卡死；e2e 加可达性预检（被 GFW/代理阻断的网络 SKIP，CI 可达正常验证）
+- **冷却递增**：首败 2 分钟、连败 10 分钟（瞬态网络抖动快恢复）
+- **--direct / EASY_WEB_SEARCH_DIRECT=1**：强制全引擎绕过代理（代理出口
+  被反爬的场景）
+- doctor 代理提示、searxng basic-auth、README 重构去重、npm 徽章
+
 ## [1.6.1] — 2026-11-07
 
 - **免 key 基线加厚**：搜狗网页 + 360 搜索进默认池（中文基线 1→3 源）

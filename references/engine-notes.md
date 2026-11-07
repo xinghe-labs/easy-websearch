@@ -100,3 +100,11 @@ most reliable on the node runtime; python users should expect intermittent
 absorbs. Also: these engines + searxng now bypass user proxies entirely
 (`direct=True`), since datacenter proxy exits get blocked by CN anti-bot
 layers immediately.
+
+### Wikipedia reachability boundary (v1.7 addendum)
+
+en/zh.wikipedia.org reachability varies by environment: blocked from CN
+direct (GFW), intermittently RST through some proxy chains (observed: node
+ECONNRESET at 29s while py urllib crawled through at 29.5s and curl-SOCKS at
+1s). The engine is correct — verified on reachable networks (py doctor OK,
+CI runners OK). e2e pre-checks reachability and SKIPs when blocked.
