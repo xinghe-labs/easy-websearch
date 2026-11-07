@@ -9,14 +9,15 @@ the GitHub username.
 - [x] CI `engine-probe` enabled and passing
 - [x] v1.1 tagged, `.github/releases/v1.1.md` written
 
-## 2. Skill directories
+## 2. Skill directories + npm
 
 | Channel | How | Priority |
 |---|---|---|
 | [skills.sh](https://skills.sh) | Auto-lists repos installable via `npx skills add <you>/easy-websearch` — verify after push | ⭐ highest traffic |
-| [awesomeskill.ai](https://awesomeskill.ai) | Submit URL via site form | high |
+| [npm](https://www.npmjs.com/package/easy-websearch) | ✅ LIVE — `easy-websearch@1.5.1`（v1.5.1 起）。发版自动发布：`publish-npm` workflow 在 release published 时触发，需要 repo secret `NPM_TOKEN`（granular token，Publish 权限 + 限定包）。手动发布：`npm publish --access public` | ⭐ highest traffic |
+| [awesomeskill.ai](https://awesomeskill.ai) | Submit URL via site form (`/submit`) | high |
 | [ComposioHQ/awesome-claude-skills](https://github.com/ComposioHQ/awesome-claude-skills) | PR adding entry to the curated list | high |
-| [agentscli marketplace](https://marketplace.agentscli.com) | Submit via catalog form | medium |
+| [agentscli marketplace](https://marketplace.agentscli.com/submit) | Submit via form (需登录) | medium |
 | clawhub (openclaw/skills) | Optional; archive of OpenClaw skills | low |
 
 ## 3. Ready-to-paste submission copy
