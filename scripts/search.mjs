@@ -582,11 +582,11 @@ async function engineBaidu(ctx) {
 
 // Sogou WeChat /link redirects return a JS stub; the real target is embedded
 // in it. Resolve up to a few links in parallel; failures keep the /link URL.
-async function resolveSogouLinks(urls, timeout) {
+async function resolveSogouLinks(urls, timeout, base = "https://weixin.sogou.com") {
   return Promise.all(urls.map(async (u) => {
     if (!u.startsWith("/link")) return u;
     try {
-      const full = new URL(u, "https://weixin.sogou.com").toString();
+      const full = new URL(u, base).toString();
       const { body } = await fetchText(full, { timeout: Math.min(timeout, 4000) });
       // Stub looks like:  url += 'https://mp.';  url += 'weixin.qq.c';  …
       // Capture group excludes the quotes; concat the pieces directly.
@@ -599,6 +599,79 @@ async function resolveSogouLinks(urls, timeout) {
     } catch { /* keep the /link URL */ }
     return u;
   }));
+}
+
+// Extract a text snippet from the body right after a result anchor's match.
+function snippetAfter(body, from, len = 200) {
+  const chunk = body.slice(from, from + 700);
+  const text = stripTags(chunk);
+  return text.slice(0, len);
+}
+
+// so.com/link?m= pages redirect via window.location.replace("target").
+function resolveSo360Links(urls, timeout) {
+  return Promise.all(urls.map(async (u) => {
+    if (!/so\.com\/link/.test(u)) return u;
+    try {
+      const { body } = await fetchText(u, { timeout: Math.min(timeout, 4000) });
+      const m = body.match(/window\.location\.replace\("([^"]+)"\)/) ||
+                body.match(/window\.location\.href\s*=\s*"([^"]+)"/) ||
+                body.match(/URL='([^']+)'/);
+      if (m && /^https?:\/\//.test(m[1])) return m[1];
+    } catch { /* keep the wrapper URL */ }
+    return u;
+  }));
+}
+
+async function engineSogouWeb(ctx) {
+  const params = new URLSearchParams({ query: ctx.query });
+  const { status, body } = await fetchText("https://www.sogou.com/web?" + params.toString(), {
+    timeout: ctx.timeout,
+    headers: { referer: "https://www.sogou.com/" },
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  if (/antispider|验证码|seccode/i.test(body)) {
+    throw new Error("sogou anti-bot page (captcha) — retry later");
+  }
+  const results = [];
+  const re = /<h3[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+  for (const m of body.matchAll(re)) {
+    if (results.length >= ctx.n * 2) break;
+    const title = stripTags(m[2]);
+    if (!title) continue;
+    results.push({ title, url: decodeEntities(m[1]), snippet: snippetAfter(body, m.index + m[0].length) });
+  }
+  if (results.length === 0) throw new Error("no results parsed");
+  const tops = results.slice(0, ctx.n);
+  const urls = await resolveSogouLinks(tops.map((r) => r.url), ctx.timeout, "https://www.sogou.com");
+  tops.forEach((r, i) => { r.url = urls[i]; });
+  return tops;
+}
+
+async function engineSo360(ctx) {
+  const params = new URLSearchParams({ q: ctx.query });
+  const { status, body } = await fetchText("https://www.so.com/s?" + params.toString(), {
+    timeout: ctx.timeout,
+    headers: { referer: "https://www.so.com/" },
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  if (/验证码|wappass/i.test(body)) {
+    throw new Error("so360 anti-bot page (captcha) — retry later");
+  }
+  const results = [];
+  const re = /<h3[^>]*class="res-title[^"]*"[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+  for (const m of body.matchAll(re)) {
+    if (results.length >= ctx.n * 2) break;
+    const title = stripTags(m[2]);
+    if (!title) continue;
+    const desc = body.slice(m.index, m.index + 900).match(/<p class="res-desc[^"]*"[^>]*>([\s\S]*?)<\/p>/);
+    results.push({ title, url: decodeEntities(m[1]), snippet: desc ? stripTags(desc[1]).slice(0, 300) : "" });
+  }
+  if (results.length === 0) throw new Error("no results parsed");
+  const tops = results.slice(0, ctx.n);
+  const urls = await resolveSo360Links(tops.map((r) => r.url), ctx.timeout);
+  tops.forEach((r, i) => { r.url = urls[i]; });
+  return tops;
 }
 
 async function engineSogouWeixin(ctx) {
@@ -662,6 +735,8 @@ const ENGINES = {
   ddg: engineDDG,
   bing: engineBing,
   baidu: engineBaidu,
+  sogouweb: engineSogouWeb,
+  so360: engineSo360,
   brave: { fn: engineBrave, key: "BRAVE_API_KEY" },
   tavily: { fn: engineTavily, key: "TAVILY_API_KEY" },
   serper: { fn: engineSerper, key: "SERPER_API_KEY" },
