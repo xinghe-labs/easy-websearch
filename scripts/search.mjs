@@ -620,14 +620,25 @@ async function engineSogouWeixin(ctx) {
   return results.slice(0, ctx.n);
 }
 
+// Split SEARXNG_BASE_URL into (clean base, optional basic-auth header).
+// Supports https://user:pass@host:port forms (needed when the instance sits
+// behind a reverse proxy with basic auth).
+function searxngBaseAndAuth(raw) {
+  const base = (raw || "").replace(/\/$/, "");
+  const ui = base.match(/^(https?:\/\/)([^@\/]*)@(.*)$/);
+  if (!ui) return { base, authorization: "" };
+  const authorization = "Basic " + Buffer.from(decodeURIComponent(ui[2])).toString("base64");
+  return { base: ui[1] + ui[3], authorization };
+}
+
 async function engineSearxng(ctx) {
-  const base = (process.env.SEARXNG_BASE_URL || "").replace(/\/$/, "");
+  const { base, authorization } = searxngBaseAndAuth(process.env.SEARXNG_BASE_URL);
   const params = new URLSearchParams({ q: ctx.query, format: "json" });
   if (ctx.lang === "zh") params.set("language", "zh-CN");
   else if (ctx.lang === "en") params.set("language", "en");
   const { status, body } = await fetchText(`${base}/search?${params.toString()}`, {
     timeout: ctx.timeout,
-    headers: { accept: "application/json" },
+    headers: { accept: "application/json", ...(authorization && { authorization }) },
   });
   if (status === 403) {
     throw new Error("SearXNG rejected JSON — add 'json' to search.formats in settings.yml");
@@ -833,4 +844,4 @@ import { pathToFileURL } from "node:url";
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) await main();
 
-export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk, cooldownPath };
+export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk, cooldownPath, searxngBaseAndAuth };

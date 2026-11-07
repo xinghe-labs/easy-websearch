@@ -566,16 +566,37 @@ def engine_sogou_weixin(ctx):
     return results[: ctx["n"]]
 
 
+def _searxng_base_and_auth(raw):
+    """Split SEARXNG_BASE_URL into (clean base, optional basic-auth header).
+
+    Supports https://user:pass@host:port forms (needed when the instance sits
+    behind a reverse proxy with basic auth). urllib cannot handle userinfo
+    URLs itself (observed: 'pass@host' parsed as port) — extract and send the
+    Authorization header explicitly instead.
+    """
+    base = (raw or "").rstrip("/")
+    m = re.match(r"^(https?://)([^@/]*)@(.*)$", base)
+    if not m:
+        return base, ""
+    authorization = "Basic " + base64.b64encode(
+        urllib.parse.unquote(m.group(2)).encode()
+    ).decode()
+    return m.group(1) + m.group(3), authorization
+
+
 def engine_searxng(ctx):
-    base = (os.environ.get("SEARXNG_BASE_URL") or "").rstrip("/")
+    base, authorization = _searxng_base_and_auth(os.environ.get("SEARXNG_BASE_URL"))
     params = {"q": ctx["query"], "format": "json"}
     if ctx["lang"] == "zh":
         params["language"] = "zh-CN"
     elif ctx["lang"] == "en":
         params["language"] = "en"
+    extra = {"accept": "application/json"}
+    if authorization:
+        extra["authorization"] = authorization
     status, body = http_text(f"{base}/search?{urllib.parse.urlencode(params)}",
                              timeout=ctx["timeout"],
-                             headers={"accept": "application/json"})
+                             headers=extra)
     if status == 403:
         raise RuntimeError("SearXNG rejected JSON — add 'json' to search.formats in settings.yml")
     if status != 200:
