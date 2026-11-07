@@ -17,7 +17,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const pkg = JSON.parse(readFileSync(path.join(scriptDir, "..", "package.json"), "utf8"));
+let pkg;
+try {
+  pkg = JSON.parse(readFileSync(path.join(scriptDir, "..", "package.json"), "utf8"));
+} catch {
+  pkg = { version: "unknown" }; // broken install — still let subcommands run
+}
 const SCRIPTS = {
   search: "search.mjs",
   fetch: "fetch.mjs",
@@ -49,7 +54,7 @@ if (!script) {
   process.exit(2);
 }
 
-const result = spawnSync(process.execPath, [path.join(scriptDir, script), ...rest], {
+const result = spawnSync(process.execPath, [path.join(scriptDir, "..", "scripts", script), ...rest], {
   stdio: "inherit",
 });
 process.exit(result.status ?? 1);

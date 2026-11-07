@@ -632,6 +632,9 @@ function searxngBaseAndAuth(raw) {
 }
 
 async function engineSearxng(ctx) {
+  if (!process.env.SEARXNG_BASE_URL) {
+    throw new Error("SEARXNG_BASE_URL not set — see README SearXNG section");
+  }
   const { base, authorization } = searxngBaseAndAuth(process.env.SEARXNG_BASE_URL);
   const params = new URLSearchParams({ q: ctx.query, format: "json" });
   if (ctx.lang === "zh") params.set("language", "zh-CN");

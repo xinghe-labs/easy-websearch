@@ -600,7 +600,10 @@ def _searxng_base_and_auth(raw):
 
 
 def engine_searxng(ctx):
-    base, authorization = _searxng_base_and_auth(os.environ.get("SEARXNG_BASE_URL"))
+    raw = os.environ.get("SEARXNG_BASE_URL")
+    if not raw:
+        raise RuntimeError("SEARXNG_BASE_URL not set — see README SearXNG section")
+    base, authorization = _searxng_base_and_auth(raw)
     params = {"q": ctx["query"], "format": "json"}
     if ctx["lang"] == "zh":
         params["language"] = "zh-CN"
