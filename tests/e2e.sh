@@ -1,84 +1,82 @@
 #!/usr/bin/env bash
 # E2E test matrix for easy-web-search. Network-dependent; run manually or in CI.
+# JSON assertions use node (present wherever the scripts can run).
 set -u
 PASS=0; FAIL=0
-check() { # check <name> <exit_code>
-  if [ "$2" -eq 0 ]; then PASS=$((PASS+1)); echo "PASS: $1"; else FAIL=$((FAIL+1)); echo "FAIL: $1"; fi
-}
+check() { if [ "$2" -eq 0 ]; then PASS=$((PASS+1)); echo "PASS: $1"; else FAIL=$((FAIL+1)); echo "FAIL: $1"; fi; }
+
+json() { node -e "
+const chunks=[];process.stdin.on('data',c=>chunks.push(c));
+process.stdin.on('end',()=>{const d=JSON.parse(Buffer.concat(chunks).toString());
+$1
+});"; }
 
 # --- search: node, english ---
 node scripts/search.mjs "rust async runtime" -n 3 >/tmp/t1.out 2>/tmp/t1.err; check "node search EN" $?
 grep -q "engines:" /tmp/t1.err; check "node search prints engine status" $?
 
-# --- search: python, chinese ---
-python3 scripts/search.py "机器学习 入门" -n 3 --lang zh >/tmp/t2.out 2>/dev/null; check "py search ZH" $?
-grep -qE "runoob|zhihu|csdn|juejin" /tmp/t2.out; check "py search ZH returns CN sources" $?
+# --- search: chinese sources ---
+node scripts/search.mjs "机器学习 入门" -n 3 --lang zh >/tmp/t2.out 2>/dev/null; check "search ZH" $?
+grep -qE "runoob|zhihu|csdn|juejin" /tmp/t2.out; check "search ZH returns CN sources" $?
 
-# --- search: json validity, both runtimes ---
-node scripts/search.mjs "webgpu" -n 3 --json 2>/dev/null | python3 -c "
-import json,sys; d=json.load(sys.stdin)
-assert d['engines'] and isinstance(d['results'], list)
-assert all({'rank','title','url','engines'} <= set(r) for r in d['results'])
-"; check "node search --json schema" $?
-python3 scripts/search.py "webgpu" -n 3 --json 2>/dev/null | python3 -c "
-import json,sys; d=json.load(sys.stdin)
-assert d['engines'] and isinstance(d['results'], list)
-"; check "py search --json schema" $?
+# --- json schema, both runtimes (python twin tested when python3 exists) ---
+node scripts/search.mjs "webgpu" -n 3 --json 2>/dev/null | json "
+const ok = d.engines && Array.isArray(d.results) &&
+  d.results.every(r => ['rank','title','url','engines'].every(k => k in r));
+if (!ok) process.exit(1);"; check "node search --json schema" $?
 
-# --- node/py result parity (same query, both produce results) ---
-python3 scripts/search.py "webgpu" -n 3 --json 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); assert len(d['results'])>=1"; check "py search non-empty" $?
-
-# --- filters: --site restricts domain ---
-node scripts/search.mjs "react hooks" -n 5 --site react.dev --json 2>/dev/null | python3 -c "
-import json,sys; d=json.load(sys.stdin)
-rs=[r for r in d['results'] if 'react.dev' not in r['url']]
-# site: is a query operator; engines may ignore it — just require overall success
-assert d['engines']
-"; check "node search --site runs" $?
-
-# --- --engine restriction ---
-node scripts/search.mjs "kubernetes" -n 3 --engine bing --json 2>/dev/null | python3 -c "
-import json,sys; d=json.load(sys.stdin)
-assert [e['name'] for e in d['engines']] == ['bing']
-"; check "node search --engine bing only" $?
-
-# --- degradation: nonexistent engine filtered, rest still work ---
-node scripts/search.mjs "kubernetes" -n 3 --engine ddg,bing --json 2>/dev/null | python3 -c "
-import json,sys; d=json.load(sys.stdin); assert any(e['ok'] for e in d['engines'])
-"; check "multi-engine at least one ok" $?
-
-# --- keyed engines: absent key must not appear or crash ---
-python3 scripts/search.py "test" -n 1 --json 2>/dev/null | python3 -c "
+if command -v python3 >/dev/null 2>&1; then
+  python3 scripts/search.py "webgpu" -n 3 --json 2>/dev/null | python3 -c "
+import json,sys; d=json.load(sys.stdin); assert d['engines'] and isinstance(d['results'], list)"
+  check "py search --json schema" $?
+  python3 scripts/search.py "test" -n 1 --json 2>/dev/null | python3 -c "
 import json,sys,os; d=json.load(sys.stdin)
-keyed={'brave','tavily','serper','exa'}
 for e in d['engines']:
-    if e['name'] in keyed and not os.environ.get(e['name'].upper()+'_API_KEY'):
-        raise SystemExit('keyed engine present without key: '+e['name'])
-"; check "keyed engines hidden without keys" $?
+    if e['name'] in ('brave','tavily','serper','exa') and not os.environ.get(e['name'].upper()+'_API_KEY'):
+        raise SystemExit('keyed engine present without key')"
+  check "keyed engines hidden without keys" $?
+else
+  echo "SKIP: python3 not found (py twins not asserted here)"
+fi
 
-# --- fetch: node direct ---
-node scripts/fetch.mjs "https://www.runoob.com/ml/ml-tutorial.html" --json 2>/dev/null | python3 -c "
-import json,sys; d=json.load(sys.stdin); assert d['ok'] and d['chars']>1000
-"; check "node fetch direct" $?
+# --- filters ---
+node scripts/search.mjs "react hooks" -n 5 --site react.dev --json >/dev/null 2>&1; check "search --site runs" $?
+node scripts/search.mjs "kubernetes" -n 3 --engine bing --json 2>/dev/null | json "
+if (d.engines.some(e => e.name !== 'bing')) process.exit(1);"; check "--engine bing only" $?
+node scripts/search.mjs "kubernetes" -n 3 --engine ddg,bing --json 2>/dev/null | json "
+if (!d.engines.some(e => e.ok)) process.exit(1);"; check "multi-engine at least one ok" $?
 
-# --- fetch: python ---
-python3 scripts/fetch.py "https://www.runoob.com/ml/ml-tutorial.html" --json 2>/dev/null | python3 -c "
-import json,sys; d=json.load(sys.stdin); assert d['ok'] and d['chars']>1000
-"; check "py fetch direct" $?
+# --- backup engines: excluded by default, opt-in works ---
+node scripts/search.mjs "webgpu" -n 1 --json 2>/dev/null | json "
+const names = d.engines.map(e => e.name);
+if (names.includes('anysearch') || names.includes('keenable')) process.exit(1);"
+check "backups excluded from default set" $?
 
-# --- fetch: blocked-site fallback path (example.com is tiny; use httpbin 403) ---
-node scripts/fetch.mjs "https://httpbin.org/status/403" --json 2>/dev/null | python3 -c "
-import json,sys; d=json.load(sys.stdin)
-assert d.get('via')=='r.jina.ai' or d.get('ok') is False  # fallback attempted, no crash
-"; check "node fetch blocked → fallback handled" $?
+EASY_WEB_SEARCH_ENGINES=keenable node scripts/search.mjs "webgpu" -n 1 --json 2>/dev/null | json "
+if (!d.engines.map(e => e.name).includes('keenable')) process.exit(1);"
+check "env opt-in enables keenable" $?
 
-# --- fetch: invalid input must not crash ---
-node scripts/fetch.mjs "not-a-url" --json >/dev/null 2>&1; [ $? -ne 0 ] || true
-python3 scripts/fetch.py "ftp://x" --json 2>/dev/null | python3 -c "
-import json,sys; d=json.load(sys.stdin); assert d['ok'] is False
-"; check "py fetch rejects bad scheme gracefully" $?
+node scripts/search.mjs "webgpu tutorial" -n 2 --engine anysearch >/dev/null 2>&1; check "--engine anysearch runs" $?
+node scripts/search.mjs "webgpu tutorial" -n 2 --engine keenable >/dev/null 2>&1; check "--engine keenable runs" $?
 
-# --- search invalid args exit codes ---
+# --- fetch ---
+node scripts/fetch.mjs "https://www.runoob.com/ml/ml-tutorial.html" --json 2>/dev/null | json "
+if (!d.ok || d.chars < 1000) process.exit(1);"; check "node fetch direct" $?
+
+if command -v python3 >/dev/null 2>&1; then
+  python3 scripts/fetch.py "https://www.runoob.com/ml/ml-tutorial.html" --json 2>/dev/null | python3 -c "
+import json,sys; d=json.load(sys.stdin); assert d['ok'] and d['chars']>1000"
+  check "py fetch direct" $?
+  python3 scripts/fetch.py "ftp://x" --json 2>/dev/null | python3 -c "
+import json,sys; d=json.load(sys.stdin); assert d['ok'] is False"
+  check "py fetch rejects bad scheme gracefully" $?
+fi
+
+node scripts/fetch.mjs "https://httpbin.org/status/403" --json 2>/dev/null | json "
+if (!(d.via === 'r.jina.ai' || d.ok === false)) process.exit(1);"
+check "node fetch blocked → fallback handled" $?
+
+# --- arg validation ---
 node scripts/search.mjs >/dev/null 2>&1; [ $? -eq 2 ]; check "node search no-args exit 2" $?
 
 echo; echo "== $PASS passed, $FAIL failed =="

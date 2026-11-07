@@ -147,13 +147,18 @@ async function run() {
   } catch { /* direct fetch failed (blocked/timeout/empty) → reader fallback */ }
 
   // 2) r.jina.ai reader fallback (free, no key; rate-limited).
-  const { status, body } = await fetchText(`https://r.jina.ai/${url}`, {
-    headers: { accept: "text/plain" }, timeout: flags.timeout,
-  });
-  if (status === 200 && body && body.trim().length > 100) {
-    return { ok: true, via: "r.jina.ai", url, chars: body.length, content: body.slice(0, flags.maxChars) };
+  try {
+    const { status, body } = await fetchText(`https://r.jina.ai/${url}`, {
+      headers: { accept: "text/plain" }, timeout: flags.timeout,
+    });
+    if (status === 200 && body && body.trim().length > 100) {
+      return { ok: true, via: "r.jina.ai", url, chars: body.length, content: body.slice(0, flags.maxChars) };
+    }
+    return { ok: false, url, error: `direct extraction failed; reader fallback HTTP ${status}` };
+  } catch (e) {
+    // Both paths failed — report structured failure instead of crashing.
+    return { ok: false, url, error: `direct extraction failed; reader fallback: ${e.message}` };
   }
-  return { ok: false, url, error: `direct extraction failed; reader fallback HTTP ${status}` };
 }
 
 const out = await run();

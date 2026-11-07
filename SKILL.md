@@ -2,9 +2,10 @@
 name: easy-web-search
 description: |
   Multi-engine web search with reliability-first failover and Chinese source
-  optimization. Zero-config: works without any API key (DuckDuckGo + Bing),
+  optimization. Zero-config: works without any API key (DuckDuckGo + Bing);
   automatically upgrades when BRAVE_API_KEY, TAVILY_API_KEY, SERPER_API_KEY,
-  or EXA_API_KEY is set. Fuses results across engines with Reciprocal Rank
+  or EXA_API_KEY is set; two more keyless engines (AnySearch, Keenable) are
+  available as opt-in backups via --engine or EASY_WEB_SEARCH_ENGINES. Fuses results across engines with Reciprocal Rank
   Fusion, decodes tracking redirects, and never fails silently — each engine
   reports its own status. Includes a URL-to-Markdown page reader.
   Use whenever the user wants to search the web, look something up, find
@@ -42,6 +43,13 @@ export BRAVE_API_KEY=...    # https://brave.com/search/api/  (2k free/mo)
 export TAVILY_API_KEY=...   # https://tavily.com             (1k free/mo)
 export SERPER_API_KEY=...   # https://serper.dev             (Google results)
 export EXA_API_KEY=...      # https://exa.ai                 (semantic search)
+export ANYSEARCH_API_KEY=...   # optional; anonymous works with lower limits
+export KEENABLE_API_KEY=...    # optional; anonymous works with lower limits
+
+Keyless backup engines (anysearch, keenable) are OFF by default — their
+anonymous quotas are low. Opt in per-run with `--engine anysearch,keenable`
+or for the whole session with `export EASY_WEB_SEARCH_ENGINES=anysearch,keenable`.
+Use them when DDG/Bing are both degraded, or for extra coverage on hard queries.
 ```
 
 If the user's environment has an HTTP(S)_PROXY set, both runtimes honor it
@@ -63,7 +71,7 @@ Options:
 | `--site example.com` | restrict to domain (repeatable) |
 | `--exclude-site foo.com` | exclude domain (repeatable) |
 | `--lang zh` | language/region boost: `zh` or `en` |
-| `--engine ddg,bing` | restrict engines (default: all available) |
+| `--engine ddg,bing` | restrict/enable engines (backups `anysearch`,`keenable` need this or `EASY_WEB_SEARCH_ENGINES`) |
 | `--timeout 8` | per-engine timeout in seconds |
 | `--json` | machine-readable output (use this for further processing) |
 

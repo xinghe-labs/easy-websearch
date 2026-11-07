@@ -22,6 +22,18 @@ Verified 2026-11-07 from a mainland-China network with a local proxy
 - **Python `urllib.request` honors `*_proxy` env vars automatically.**
   → No extra work needed in the Python implementation.
 
+## Optional-key backup engines (v1.1)
+
+Probed 2026-11-07 (both anonymous, from a proxied CN network):
+
+| Engine | Method | Result | Notes |
+|---|---|---|---|
+| AnySearch | `POST https://api.anysearch.com/v1/search` `{query, max_results}` | ✅ anonymous 200 | Envelope `{code:0, data:{results:[{title,url,snippet,content}]}}`. Key optional (`ANYSEARCH_API_KEY`). Low anonymous quota — backup only. |
+| Keenable | `POST https://api.keenable.ai/v1/search/public` `{query, max_results, snippet_max_length}` | ✅ keyless 200 | **Requires `X-Keenable-Title` header** on the public endpoint (400 otherwise). Results `{title,url,snippet}`; drop `cards.keenable.ai` URLs (ephemeral). Keyed path: `/v1/search` + `X-API-Key`. |
+
+Neither is in the default engine set (anonymous quotas are low). Opt in via
+`--engine anysearch,keenable` or `EASY_WEB_SEARCH_ENGINES=anysearch,keenable`.
+
 ## Design consequences
 
 1. Reliability-first ordering confirmed: with proxy → DDG + Bing; without

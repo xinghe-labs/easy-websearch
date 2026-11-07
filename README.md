@@ -5,7 +5,9 @@ Multi-engine web search + page reader for AI coding agents — as a single
 
 **Zero-config**: works with no API key at all (DuckDuckGo + Bing baseline).
 **Better with keys**: set `BRAVE_API_KEY`, `TAVILY_API_KEY`, `SERPER_API_KEY`,
-or `EXA_API_KEY` and those engines join the pool automatically.
+or `EXA_API_KEY` and those engines join the pool automatically. Two more
+keyless engines (AnySearch, Keenable) are available as opt-in backups
+(`EASY_WEB_SEARCH_ENGINES=anysearch,keenable`) for extra coverage.
 
 ```text
 query ──► [ ddg ] [ bing ] [ brave ] [ tavily ] [ serper ] [ exa ]
@@ -16,6 +18,9 @@ query ──► [ ddg ] [ bing ] [ brave ] [ tavily ] [ serper ] [ exa ]
                               ▼
             ranked results, engine attribution, JSON output
 ```
+
+Plus two keyless backup engines (AnySearch, Keenable) for when the
+baselines degrade.
 
 ## Why easy-web-search
 
@@ -56,8 +61,12 @@ npx skills add <you>/easy-web-search
 | `TAVILY_API_KEY` | Tavily | 1,000/mo | tavily.com |
 | `SERPER_API_KEY` | Google (Serper) | trial credits | serper.dev |
 | `EXA_API_KEY` | Exa (semantic) | trial credits | exa.ai |
+| `ANYSEARCH_API_KEY` | AnySearch | optional — anonymous works with lower limits | anysearch.com |
+| `KEENABLE_API_KEY` | Keenable | optional — anonymous works with lower limits | keenable.ai |
 
-All optional. Baseline engines need nothing.
+All optional. Baseline engines need nothing. The two keyless backup engines
+are excluded from the default run (their anonymous quotas are low); enable
+with `--engine anysearch,keenable` or `EASY_WEB_SEARCH_ENGINES=anysearch,keenable`.
 
 ## Usage
 
