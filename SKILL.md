@@ -3,11 +3,15 @@ name: easy-websearch
 description: |
   Multi-engine web search with reliability-first failover and Chinese source
   optimization. Zero-config: works without any API key (DuckDuckGo + Bing);
-  automatically upgrades when BRAVE_API_KEY, TAVILY_API_KEY, SERPER_API_KEY,
-  or EXA_API_KEY is set; two more keyless engines (AnySearch, Keenable) are
-  available as opt-in backups via --engine or EASY_WEB_SEARCH_ENGINES. Fuses results across engines with Reciprocal Rank
-  Fusion, decodes tracking redirects, and never fails silently — each engine
-  reports its own status. Includes a URL-to-Markdown page reader.
+  automatically upgrades when any of BRAVE_API_KEY, TAVILY_API_KEY,
+  SERPER_API_KEY, EXA_API_KEY, FIRECRAWL_API_KEY, BOCHA_API_KEY,
+  METASO_API_KEY, LINKUP_API_KEY, or OLLAMA_API_KEY is set; two more keyless
+  engines (AnySearch, Keenable) are available as opt-in backups via --engine
+  or EASY_WEB_SEARCH_ENGINES. Fuses results across engines with Reciprocal
+  Rank Fusion, decodes tracking redirects, cools down failing engines, and
+  never fails silently — each engine reports its own status. Includes a
+  URL-to-Markdown page reader (direct → Firecrawl → reader fallback) and a
+  doctor self-check command.
   Use whenever the user wants to search the web, look something up, find
   current information, research a topic, check the latest news, or read a
   webpage's content: e.g. "search for", "look up", "find articles about",
@@ -39,17 +43,25 @@ command -v node && echo NODE_OK || command -v python3 && echo PY_OK
 Optional upgrades (all optional; detected automatically, never required):
 
 ```bash
-export BRAVE_API_KEY=...    # https://brave.com/search/api/  (2k free/mo)
-export TAVILY_API_KEY=...   # https://tavily.com             (1k free/mo)
-export SERPER_API_KEY=...   # https://serper.dev             (Google results)
-export EXA_API_KEY=...      # https://exa.ai                 (semantic search)
-export ANYSEARCH_API_KEY=...   # optional; anonymous works with lower limits
-export KEENABLE_API_KEY=...    # optional; anonymous works with lower limits
+export BRAVE_API_KEY=...      # https://brave.com/search/api/  (2k free/mo)
+export TAVILY_API_KEY=...     # https://tavily.com             (1k free/mo)
+export SERPER_API_KEY=...     # https://serper.dev             (Google results)
+export EXA_API_KEY=...        # https://exa.ai                 (semantic search)
+export FIRECRAWL_API_KEY=...  # https://firecrawl.dev          (search + better fetch)
+export BOCHA_API_KEY=...      # https://open.bochaai.com       (Chinese web search)
+export METASO_API_KEY=...     # https://metaso.cn/search-api   (Chinese AI search)
+export LINKUP_API_KEY=...     # https://linkup.so              (sourced answers)
+export OLLAMA_API_KEY=...     # https://ollama.com             (web search API)
+export ANYSEARCH_API_KEY=...  # optional; anonymous works with lower limits
+export KEENABLE_API_KEY=...   # optional; anonymous works with lower limits
 
 Keyless backup engines (anysearch, keenable) are OFF by default — their
 anonymous quotas are low. Opt in per-run with `--engine anysearch,keenable`
 or for the whole session with `export EASY_WEB_SEARCH_ENGINES=anysearch,keenable`.
 Use them when DDG/Bing are both degraded, or for extra coverage on hard queries.
+
+Chinese-language queries get a boost from bocha/metaso (when configured) —
+both are domestic Chinese search engines.
 ```
 
 If the user's environment has an HTTP(S)_PROXY set, both runtimes honor it
@@ -73,6 +85,7 @@ Options:
 | `--lang zh` | language/region boost: `zh` or `en` |
 | `--engine ddg,bing` | restrict/enable engines (backups `anysearch`,`keenable` need this or `EASY_WEB_SEARCH_ENGINES`) |
 | `--timeout 8` | per-engine timeout in seconds |
+| `--no-cooldown` | disable the failure cooldown (by default, engines that just failed are skipped for 10 min on default runs) |
 | `--json` | machine-readable output (use this for further processing) |
 
 Prefer `--json` and parse the output; it includes per-engine status
@@ -87,6 +100,21 @@ Interpreting results:
   fusion continues with the rest. Do not retry the whole search because one
   engine failed.
 - All engines failed → report the errors; suggest setting an API key.
+- Engines marked `skipped (cooldown: ...)` failed recently; the cooldown
+  avoids re-burning requests on them. Override with `--engine <name>` or
+  `--no-cooldown` when the user asks to retry.
+
+## Health check (doctor)
+
+When search results look odd or the user asks what engines are configured:
+
+```bash
+node scripts/doctor.mjs            # table: status, latency, config gaps per engine
+python3 scripts/doctor.py --json   # machine-readable
+```
+
+Runs one tiny real search per engine (concurrently). SKIP means the engine's
+key is not configured. Exit code: 0 healthy, 1 any failure, 2 nothing testable.
 
 ## Fetch page content
 
@@ -96,9 +124,9 @@ python3 scripts/fetch.py "https://example.com/article" [--json]
 ```
 
 Extracts readable content as Markdown (title + meta description + body).
-If the site blocks direct fetching (403/429/anti-bot), it automatically
-falls back to the r.jina.ai reader. `via` in the JSON output tells you
-which path succeeded.
+Fallback chain: direct fetch → Firecrawl scrape (when `FIRECRAWL_API_KEY`
+is set) → r.jina.ai reader. `via` in the JSON output tells you which path
+succeeded.
 
 ## Research workflow (multi-question tasks)
 

@@ -7,18 +7,24 @@
 
 **零配置**：不配任何 API key 也能用（DuckDuckGo + Bing 基线）。
 **配 key 更强**：设置 `BRAVE_API_KEY`、`TAVILY_API_KEY`、`SERPER_API_KEY`、
-`EXA_API_KEY` 后对应引擎自动加入。另有两个免 key 备援引擎（AnySearch、
-Keenable），通过 `EASY_WEB_SEARCH_ENGINES=anysearch,keenable` 按需启用。
+`EXA_API_KEY`、`FIRECRAWL_API_KEY`、`BOCHA_API_KEY`、`METASO_API_KEY`、
+`LINKUP_API_KEY`、`OLLAMA_API_KEY` 后对应引擎自动加入。另有两个免 key 备援
+引擎（AnySearch、Keenable），通过 `EASY_WEB_SEARCH_ENGINES=anysearch,keenable`
+按需启用。失败的引擎会进入 10 分钟冷却期，单个坏引擎不会拖垮整个请求。
 
 ```text
 查询 ──► [ ddg ] [ bing ] [ brave ] [ tavily ] [ serper ] [ exa ]
               │        │        │        │         │        │
               └──── 单引擎超时，独立降级互不影响 ────┘
+                 ［配 key 后自动加入：firecrawl / bocha / metaso / linkup / ollama］
                               ▼
                 RRF 倒数排名融合 + URL 去重
                               ▼
           排序结果、来源引擎标注、JSON 结构化输出
 ```
+
+另有免 key 备援引擎（AnySearch、Keenable）在基线降级时兜底，
+以及 `doctor` 自检命令和失败冷却机制。
 
 <p align="center"><img src="assets/demo.svg" alt="easy-websearch real search output: engines status + fused results" width="720"></p>
 
@@ -59,6 +65,11 @@ npx skills add xinghe-labs/easy-websearch
 | `TAVILY_API_KEY` | Tavily | 1,000 次/月 | tavily.com |
 | `SERPER_API_KEY` | Google（Serper） | 试用额度 | serper.dev |
 | `EXA_API_KEY` | Exa（语义搜索） | 试用额度 | exa.ai |
+| `FIRECRAWL_API_KEY` | Firecrawl | 试用额度；同时升级 fetch 抓取 | firecrawl.dev |
+| `BOCHA_API_KEY` | 博查（中文搜索） | 付费，有免费额度 | open.bochaai.com |
+| `METASO_API_KEY` | 秘塔（中文 AI 搜索） | 付费，有免费额度 | metaso.cn/search-api |
+| `LINKUP_API_KEY` | Linkup | 免费额度 | linkup.so |
+| `OLLAMA_API_KEY` | Ollama 网页搜索 | 免费账号 | ollama.com |
 | `ANYSEARCH_API_KEY` | AnySearch | 可不填——匿名限速可用 | anysearch.com |
 | `KEENABLE_API_KEY` | Keenable | 可不填——匿名限速可用 | keenable.ai |
 
@@ -104,8 +115,16 @@ Bing `/ck/a` 和 DDG `/l/?uddg=` 跳转），跨引擎累加后排序——**多
 引擎都认可的页面自然浮到顶部**。
 
 失败是预期内的：任何引擎都可能超时、被限流或吃到反爬页——它的状态会被
-如实标注，融合继续用剩下的源。全部引擎都失败时，你会拿到各引擎的错误信
-息，而不是沉默。
+如实标注，并进入 10 分钟冷却（后续默认运行自动跳过；用 `--engine` 或
+`--no-cooldown` 可强制重试），融合继续用剩下的源。全部引擎都失败时，你
+会拿到各引擎的错误信息，而不是沉默。
+
+## 健康自检
+
+```bash
+node scripts/doctor.mjs        # 每引擎状态、延迟、配置缺失一目了然
+python3 scripts/doctor.py --json
+```
 
 ## 环境要求
 

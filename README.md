@@ -7,14 +7,18 @@ Multi-engine web search + page reader for AI coding agents — as a single
 
 **Zero-config**: works with no API key at all (DuckDuckGo + Bing baseline).
 **Better with keys**: set `BRAVE_API_KEY`, `TAVILY_API_KEY`, `SERPER_API_KEY`,
-or `EXA_API_KEY` and those engines join the pool automatically. Two more
-keyless engines (AnySearch, Keenable) are available as opt-in backups
-(`EASY_WEB_SEARCH_ENGINES=anysearch,keenable`) for extra coverage.
+`EXA_API_KEY`, `FIRECRAWL_API_KEY`, `BOCHA_API_KEY`, `METASO_API_KEY`,
+`LINKUP_API_KEY`, or `OLLAMA_API_KEY` and those engines join the pool
+automatically. Two more keyless engines (AnySearch, Keenable) are available
+as opt-in backups (`EASY_WEB_SEARCH_ENGINES=anysearch,keenable`) for extra
+coverage. Failing engines get a 10-minute cooldown so one bad engine never
+burns the whole request.
 
 ```text
 query ──► [ ddg ] [ bing ] [ brave ] [ tavily ] [ serper ] [ exa ]
               │        │        │        │         │        │
               └── per-engine timeout, independent failover ──┘
+                 [+ firecrawl, bocha, metaso, linkup, ollama w/ keys]
                               ▼
               Reciprocal Rank Fusion + URL dedup
                               ▼
@@ -22,7 +26,7 @@ query ──► [ ddg ] [ bing ] [ brave ] [ tavily ] [ serper ] [ exa ]
 ```
 
 Plus two keyless backup engines (AnySearch, Keenable) for when the
-baselines degrade.
+baselines degrade, a `doctor` self-check command, and a failure cooldown.
 
 ## Why easy-websearch
 
@@ -63,6 +67,11 @@ npx skills add <you>/easy-websearch
 | `TAVILY_API_KEY` | Tavily | 1,000/mo | tavily.com |
 | `SERPER_API_KEY` | Google (Serper) | trial credits | serper.dev |
 | `EXA_API_KEY` | Exa (semantic) | trial credits | exa.ai |
+| `FIRECRAWL_API_KEY` | Firecrawl | trial credits; also upgrades `fetch` | firecrawl.dev |
+| `BOCHA_API_KEY` | 博查 (Chinese web) | paid, free grant | open.bochaai.com |
+| `METASO_API_KEY` | 秘塔 Metaso (Chinese AI search) | paid, free grant | metaso.cn/search-api |
+| `LINKUP_API_KEY` | Linkup | free tier | linkup.so |
+| `OLLAMA_API_KEY` | Ollama web search | free account | ollama.com |
 | `ANYSEARCH_API_KEY` | AnySearch | optional — anonymous works with lower limits | anysearch.com |
 | `KEENABLE_API_KEY` | Keenable | optional — anonymous works with lower limits | keenable.ai |
 
@@ -113,8 +122,17 @@ Bing `/ck/a` and DDG `/l/?uddg=` redirects decoded), so pages that
 *multiple independent engines* agree on rise to the top.
 
 Failure is expected and handled: any engine can time out, get rate-limited,
-or serve an anti-bot page — its status is reported and fusion proceeds with
-the rest. If *all* engines fail, you get their error messages, not silence.
+or serve an anti-bot page — its status is reported, it enters a 10-minute
+cooldown (skipped on subsequent default runs; override with `--engine` or
+`--no-cooldown`), and fusion proceeds with the rest. If *all* engines fail,
+you get their error messages, not silence.
+
+## Health check
+
+```bash
+node scripts/doctor.mjs        # per-engine status, latency, config gaps
+python3 scripts/doctor.py --json
+```
 
 ## Requirements
 

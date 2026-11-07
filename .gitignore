@@ -8,3 +8,4 @@ Thumbs.db
 # Local experiments (never commit scratch test files)
 sandbox/
 *.log
+__pycache__/
