@@ -65,6 +65,20 @@ UX-review fixes (see [`docs/ux-review-2026-11-07.md`](docs/ux-review-2026-11-07.
   per-engine status, URL→Markdown page reader, zero dependencies
   (Node or Python stdlib)
 
+## [1.6.0] — 2026-11-07
+
+UX review v2 落地（[`docs/ux-review-2026-11-07-v2.md`](docs/ux-review-2026-11-07-v2.md)）：
+
+- **`--direct` / `EASY_WEB_SEARCH_DIRECT=1`**（P1-1+P2-3）：强制所有引擎绕过
+  代理 —— 解决"挂代理的国内用户 4 个基线引擎被数据中心出口反爬集体拦截"
+- **doctor 代理提示**（P1-1）：检测到代理且 ≥2 个抓取引擎失败时，文本/JSON
+  输出明确提示绕过手段（双运行时）
+- **冷却时长递增**（P3-6）：首次失败 2 分钟（瞬时抖动快恢复），连败升 10
+  分钟；成功即清零（双运行时）
+- **fetch 错误文案**（P3-7）：reader 被拒场景补充说明
+- 文档（P1-2/P2-4/P2-5）：README 双语新增「代理用户推荐引擎池」、
+  `npx easy-websearch setup` 安装路径、「国内用户 npm 路径更稳」注记
+
 ## [1.5.1] — 2026-11-07
 
 - npm 正式发布 `easy-websearch@1.5.1`：`npm install -g easy-websearch` 或 `npx easy-websearch doctor` 免安装体验（README 已加 npm 安装文档）
