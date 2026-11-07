@@ -692,8 +692,9 @@ def engine_wikipedia(ctx):
     lang = ctx["lang"] if ctx["lang"] in ("zh", "en") else ("zh" if cjk else "en")
     params = {"action": "query", "list": "search", "srsearch": ctx["query"],
               "format": "json", "srlimit": str(min(ctx["n"], 10))}
+    # Wikipedia via slow proxies sits right at the generic timeout — give it 1.5×.
     status, body = http_text(f"https://{lang}.wikipedia.org/w/api.php?{urllib.parse.urlencode(params)}",
-                             timeout=ctx["timeout"], headers={"accept": "application/json"})
+                             timeout=max(ctx["timeout"] * 1.5, 12), headers={"accept": "application/json"})
     if status != 200:
         raise RuntimeError(f"HTTP {status}")
     items = parse_json(body).get("query", {}).get("search", [])

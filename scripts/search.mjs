@@ -718,8 +718,10 @@ async function engineWikipedia(ctx) {
     action: "query", list: "search", srsearch: ctx.query,
     format: "json", srlimit: String(Math.min(ctx.n, 10)),
   });
+  // Wikipedia via slow proxies sits right at the generic timeout — give it 1.5×.
+  const wikiTimeout = Math.max(ctx.timeout * 1.5, 12000);
   const { status, body } = await fetchText(`https://${lang}.wikipedia.org/w/api.php?${params}`, {
-    timeout: ctx.timeout, headers: { accept: "application/json" },
+    timeout: wikiTimeout, headers: { accept: "application/json" },
   });
   if (status !== 200) throw new Error(`HTTP ${status}`);
   const items = parseJson(body)?.query?.search || [];
@@ -1091,4 +1093,4 @@ import { pathToFileURL } from "node:url";
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) await main();
 
-export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk, cooldownPath, searxngBaseAndAuth, setForceDirect };
+export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk, cooldownPath, searxngBaseAndAuth, setForceDirect, routeAuto };
