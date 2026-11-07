@@ -30,14 +30,50 @@ const DEFAULT_TIMEOUT = 8000;
 const RRF_K = 60;
 
 // ---------------------------------------------------------------- args ----
+const USAGE = 'Usage: node search.mjs "query" [-n 10] [--days 7] [--site d] [--exclude-site d] [--lang zh] [--engine ddg,bing] [--timeout 8] [--no-cooldown] [--json]';
+
+const VALUE_FLAGS = new Set(["-n", "--num", "--days", "--site", "--exclude-site", "--lang", "--engine", "--timeout"]);
+const KNOWN_FLAGS = new Set([...VALUE_FLAGS, "--json", "--no-cooldown", "--help", "-h"]);
+
+function printHelp() {
+  console.log(USAGE);
+  console.log(`
+Engines: ddg, bing (baseline, no key) | brave, tavily, serper, exa,
+  firecrawl, bocha, metaso, linkup, ollama (auto-enabled by their *_API_KEY)
+  | anysearch, keenable (keyless backups, opt-in via --engine or
+  EASY_WEB_SEARCH_ENGINES)
+Options:
+  -n, --num <k>           max results (default 10)
+  --days <n>              time window (ddg: day/week/month; exa: exact; bocha: freshness)
+  --site <domain>         restrict to domain (repeatable)
+  --exclude-site <domain> exclude domain (repeatable)
+  --lang <zh|en>          language/region boost
+  --engine <a,b,c>        restrict/enable engines (comma-separated)
+  --timeout <sec>         per-engine timeout (default 8)
+  --no-cooldown           ignore the failure cooldown for this run
+  --json                  machine-readable output
+  -h, --help              show this help
+See README.md for details. Run scripts/doctor.mjs to check engine health.`);
+}
+
 function parseArgs(argv) {
   const args = {
     query: "", n: 10, days: 0, site: [], excludeSite: [], lang: "",
     engines: "", timeout: DEFAULT_TIMEOUT, json: false, noCooldown: false,
+    help: false,
   };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    if (a === "--help" || a === "-h") { args.help = true; continue; }
+    if (a.startsWith("-") && a !== "-" && !KNOWN_FLAGS.has(a)) {
+      console.error(`Unknown option: ${a}\n${USAGE}\nRun with --help for details.`);
+      process.exit(2);
+    }
+    if (VALUE_FLAGS.has(a) && (i + 1 >= argv.length || argv[i + 1].startsWith("-"))) {
+      console.error(`Missing value for option: ${a}\n${USAGE}`);
+      process.exit(2);
+    }
     if (a === "-n" || a === "--num") args.n = parseInt(argv[++i], 10) || 10;
     else if (a === "--days") args.days = parseInt(argv[++i], 10) || 0;
     else if (a === "--site") args.site.push(argv[++i]);
@@ -517,8 +553,9 @@ function saveCooldowns(state) {
 // ---------------------------------------------------------------- main ----
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.help) { printHelp(); return; }
   if (!args.query) {
-    console.error('Usage: node search.mjs "query" [-n 10] [--days 7] [--site d] [--exclude-site d] [--lang zh] [--engine ddg,bing] [--json]');
+    console.error(`${USAGE}\nRun with --help for details.`);
     process.exit(2);
   }
   const ctx = { ...args, query: buildQuery(args) };
