@@ -65,6 +65,12 @@ UX-review fixes (see [`docs/ux-review-2026-11-07.md`](docs/ux-review-2026-11-07.
   per-engine status, URL→Markdown page reader, zero dependencies
   (Node or Python stdlib)
 
+## [1.6.1] — 2026-11-07
+
+- **免 key 基线加厚**：搜狗网页 + 360 搜索进默认池（中文基线 1→3 源）
+- `/link` 包装链接解析的 base 主机参数化（修复搜狗网页解析）
+- doctor 代理提示抓取清单扩展；e2e 扩至 37 项
+
 ## [1.6.0] — 2026-11-07
 
 UX review v2 落地（[`docs/ux-review-2026-11-07-v2.md`](docs/ux-review-2026-11-07-v2.md)）：
