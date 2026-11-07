@@ -31,11 +31,31 @@ import sys
 import time
 import urllib.error
 import urllib.parse
-from urllib.request import build_opener
+from urllib.request import BaseHandler, build_opener
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 RRF_K = 60
+
+
+class _HeaderInjector(BaseHandler):
+    """Apply per-request headers after urllib's built-in defaults.
+
+    AbstractHTTPHandler.do_request_ adds `Content-Type:
+    application/x-www-form-urlencoded` to every data-bearing request;
+    opener.addheaders entries are applied earlier and lose to it. Handlers
+    registered later run later, so overwriting here wins.
+    """
+
+    def __init__(self, headers: dict):
+        self._headers = headers
+
+    def http_request(self, req):
+        for key, value in self._headers.items():
+            req.add_unredirected_header(key.capitalize(), value)
+        return req
+
+    https_request = http_request
 
 
 def parse_json(body):
@@ -63,8 +83,12 @@ def http_text(url: str, method: str = "GET", headers: dict | None = None,
         "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
         **(headers or {}),
     }
+    # Headers are injected via a late-running handler: urllib's default
+    # `Content-Type: application/x-www-form-urlencoded` for data-bearing
+    # requests runs first and addheaders lose to it (observed: Bocha 415).
+    # A handler registered after the defaults overwrites that header.
     opener = build_opener()
-    opener.addheaders = list(merged.items())
+    opener.add_handler(_HeaderInjector(merged))
     try:
         with opener.open(safe_url, data=data if method == "POST" else None,
                          timeout=timeout) as r:
@@ -266,6 +290,113 @@ def engine_keenable(ctx):
             if r.get("url") and not r["url"].startswith("https://cards.keenable.ai/")]
 
 
+def engine_firecrawl(ctx):
+    payload = {"query": ctx["query"], "limit": min(ctx["n"], 20),
+               "scrapeOptions": {"formats": ["markdown"]}}
+    status, body = http_text("https://api.firecrawl.dev/v1/search", method="POST",
+                             data=json.dumps(payload).encode(),
+                             headers={"content-type": "application/json",
+                                      "authorization": f"Bearer {ctx['env']['FIRECRAWL_API_KEY']}"},
+                             timeout=ctx["timeout"])
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    res = parse_json(body)
+    if res.get("success") is False:
+        raise RuntimeError(res.get("error") or "firecrawl error")
+    items = res.get("data") if isinstance(res.get("data"), list) else (res.get("data") or {}).get("web", [])
+    return [{"title": r.get("title") or r["url"], "url": r["url"],
+             "snippet": (r.get("description") or r.get("markdown") or "")[:400]}
+            for r in items if r.get("url")]
+
+
+def engine_bocha(ctx):
+    # freshness: noLimit | oneDay | oneWeek | oneMonth | oneYear
+    d = ctx["days"]
+    freshness = ("noLimit" if d <= 0 else "oneDay" if d <= 1 else
+                 "oneWeek" if d <= 7 else "oneMonth" if d <= 31 else "oneYear")
+    payload = {"query": ctx["query"], "freshness": freshness, "summary": False,
+               "count": min(max(ctx["n"], 1), 50)}
+    status, body = http_text("https://api.bochaai.com/v1/web-search", method="POST",
+                             data=json.dumps(payload).encode(),
+                             headers={"content-type": "application/json",
+                                      "authorization": f"Bearer {ctx['env']['BOCHA_API_KEY']}"},
+                             timeout=ctx["timeout"])
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    items = ((parse_json(body).get("data") or {}).get("webPages") or {}).get("value", [])
+    return [{"title": r.get("name") or r["url"], "url": r["url"],
+             "snippet": (r.get("snippet") or "")[:400]} for r in items if r.get("url")]
+
+
+def engine_metaso(ctx):
+    payload = {"mode": "search", "q": ctx["query"], "scope": "webpage",
+               "size": str(min(max(ctx["n"], 1), 20)),
+               "includeSummary": False, "conciseSnippet": True}
+    status, body = http_text("https://metaso.cn/api/v1/search", method="POST",
+                             data=json.dumps(payload).encode(),
+                             headers={"content-type": "application/json",
+                                      "authorization": f"Bearer {ctx['env']['METASO_API_KEY']}"},
+                             timeout=ctx["timeout"])
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    res = parse_json(body)
+    # Error shapes seen in the wild: {"errCode":2005,"errMsg":"API密钥无效"}
+    # (curl) and {"code":5000,"message":"系统内部错误"} (urllib) — both
+    # wrapped in HTTP 200. Treat any non-success code as an engine error.
+    code = res.get("errCode") or res.get("code") or res.get("error")
+    if code not in (None, 0, "0", 200, "200", "success"):
+        raise RuntimeError(str(res.get("errMsg") or res.get("message") or res.get("error") or code))
+    # Response envelope is not formally documented; walk the JSON for the
+    # first array of URL-bearing objects (survives shape changes).
+    items = []
+
+    def visit(v):
+        if not isinstance(v, dict):
+            if isinstance(v, list):
+                for x in v:
+                    visit(x)
+            return
+        if isinstance(v.get("url"), str) and v["url"].startswith("http"):
+            if len(items) < 60:
+                items.append(v)
+            return
+        for x in v.values():
+            visit(x)
+
+    visit(res)
+    return [{"title": r.get("title") or r.get("name") or r["url"], "url": r["url"],
+             "snippet": (r.get("snippet") or r.get("summary") or r.get("content") or "")[:400]}
+            for r in items]
+
+
+def engine_linkup(ctx):
+    payload = {"q": ctx["query"], "depth": "standard", "outputType": "searchResults"}
+    status, body = http_text("https://api.linkup.so/v1/search", method="POST",
+                             data=json.dumps(payload).encode(),
+                             headers={"content-type": "application/json",
+                                      "authorization": f"Bearer {ctx['env']['LINKUP_API_KEY']}"},
+                             timeout=ctx["timeout"])
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    items = parse_json(body).get("results", [])
+    return [{"title": r.get("name") or r["url"], "url": r["url"],
+             "snippet": (r.get("content") or "")[:400]} for r in items if r.get("url")]
+
+
+def engine_ollama(ctx):
+    payload = {"query": ctx["query"]}
+    status, body = http_text("https://ollama.com/api/web_search", method="POST",
+                             data=json.dumps(payload).encode(),
+                             headers={"content-type": "application/json",
+                                      "authorization": f"Bearer {ctx['env']['OLLAMA_API_KEY']}"},
+                             timeout=ctx["timeout"])
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    items = parse_json(body).get("results", [])[: ctx["n"]]
+    return [{"title": r.get("title") or r["url"], "url": r["url"],
+             "snippet": (r.get("content") or "")[:400]} for r in items if r.get("url")]
+
+
 # (name, engine_fn, env_key, flags): baseline engines run by default; keyed
 # engines join when their key exists; backup engines also need an explicit
 # opt-in (--engine or EASY_WEB_SEARCH_ENGINES) because anonymous quotas are low.
@@ -276,6 +407,11 @@ ENGINES = {
     "tavily": (engine_tavily, "TAVILY_API_KEY", frozenset()),
     "serper": (engine_serper, "SERPER_API_KEY", frozenset()),
     "exa": (engine_exa, "EXA_API_KEY", frozenset()),
+    "firecrawl": (engine_firecrawl, "FIRECRAWL_API_KEY", frozenset()),
+    "bocha": (engine_bocha, "BOCHA_API_KEY", frozenset()),
+    "metaso": (engine_metaso, "METASO_API_KEY", frozenset()),
+    "linkup": (engine_linkup, "LINKUP_API_KEY", frozenset()),
+    "ollama": (engine_ollama, "OLLAMA_API_KEY", frozenset()),
     "anysearch": (engine_anysearch, "ANYSEARCH_API_KEY", frozenset({"optional_key", "backup"})),
     "keenable": (engine_keenable, "KEENABLE_API_KEY", frozenset({"optional_key", "backup"})),
 }
@@ -333,7 +469,9 @@ def main():
     args = p.parse_args()
 
     env = {k: os.environ[k] for k in
-           ("BRAVE_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY", "EXA_API_KEY")
+           ("BRAVE_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY", "EXA_API_KEY",
+            "FIRECRAWL_API_KEY", "BOCHA_API_KEY", "METASO_API_KEY", "LINKUP_API_KEY",
+            "OLLAMA_API_KEY", "ANYSEARCH_API_KEY", "KEENABLE_API_KEY")
            if os.environ.get(k)}
 
     ctx = {"query": build_query(args), "n": args.num, "days": args.days,

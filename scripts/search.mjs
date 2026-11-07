@@ -327,6 +327,103 @@ async function engineKeenable(ctx) {
     .map((r) => ({ title: r.title, url: r.url, snippet: (r.snippet || "").slice(0, 400) }));
 }
 
+async function engineFirecrawl(ctx) {
+  const payload = {
+    query: ctx.query,
+    limit: Math.min(ctx.n, 20),
+    scrapeOptions: { formats: ["markdown"] },
+  };
+  const { status, body } = await fetchText("https://api.firecrawl.dev/v1/search", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${process.env.FIRECRAWL_API_KEY}` },
+    body: JSON.stringify(payload), timeout: ctx.timeout,
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const res = parseJson(body);
+  if (res.success === false) throw new Error(res.error || "firecrawl error");
+  const items = Array.isArray(res.data) ? res.data : res.data?.web || [];
+  return items
+    .filter((r) => r.url)
+    .map((r) => ({ title: r.title || r.url, url: r.url, snippet: (r.description || r.markdown || "").slice(0, 400) }));
+}
+
+async function engineBocha(ctx) {
+  // freshness: noLimit | oneDay | oneWeek | oneMonth | oneYear
+  const d = ctx.days;
+  const freshness = d <= 0 ? "noLimit" : d <= 1 ? "oneDay" : d <= 7 ? "oneWeek" : d <= 31 ? "oneMonth" : "oneYear";
+  const payload = { query: ctx.query, freshness, summary: false, count: Math.min(Math.max(ctx.n, 1), 50) };
+  const { status, body } = await fetchText("https://api.bochaai.com/v1/web-search", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${process.env.BOCHA_API_KEY}` },
+    body: JSON.stringify(payload), timeout: ctx.timeout,
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const items = parseJson(body)?.data?.webPages?.value || [];
+  return items
+    .filter((r) => r.url)
+    .map((r) => ({ title: r.name || r.url, url: r.url, snippet: (r.snippet || "").slice(0, 400) }));
+}
+
+async function engineMetaso(ctx) {
+  const payload = {
+    mode: "search",
+    q: ctx.query,
+    scope: "webpage",
+    size: String(Math.min(Math.max(ctx.n, 1), 20)),
+    includeSummary: false,
+    conciseSnippet: true,
+  };
+  const { status, body } = await fetchText("https://metaso.cn/api/v1/search", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${process.env.METASO_API_KEY}` },
+    body: JSON.stringify(payload), timeout: ctx.timeout,
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const res = parseJson(body);
+  // Metaso wraps errors in HTTP 200 (e.g. {"errCode":2005,"errMsg":"API密钥无效"}).
+  if (res.errCode || res.error) throw new Error(res.errMsg || res.error || `errCode ${res.errCode}`);
+  // Response envelope is not formally documented; walk the JSON for the
+  // first array of URL-bearing objects (survives shape changes).
+  const items = [];
+  const visit = (v) => {
+    if (!v || typeof v !== "object" || items.length >= 60) return;
+    if (Array.isArray(v)) { v.forEach(visit); return; }
+    if (typeof v.url === "string" && /^https?:\/\//.test(v.url)) { items.push(v); return; }
+    Object.values(v).forEach(visit);
+  };
+  visit(res);
+  return items
+    .map((r) => ({ title: r.title || r.name || r.url, url: r.url, snippet: (r.snippet || r.summary || r.content || "").slice(0, 400) }));
+}
+
+async function engineLinkup(ctx) {
+  const payload = { q: ctx.query, depth: "standard", outputType: "searchResults" };
+  const { status, body } = await fetchText("https://api.linkup.so/v1/search", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${process.env.LINKUP_API_KEY}` },
+    body: JSON.stringify(payload), timeout: ctx.timeout,
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const items = parseJson(body)?.results || [];
+  return items
+    .filter((r) => r.url)
+    .map((r) => ({ title: r.name || r.url, url: r.url, snippet: (r.content || "").slice(0, 400) }));
+}
+
+async function engineOllama(ctx) {
+  const payload = { query: ctx.query };
+  const { status, body } = await fetchText("https://ollama.com/api/web_search", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${process.env.OLLAMA_API_KEY}` },
+    body: JSON.stringify(payload), timeout: ctx.timeout,
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const items = parseJson(body)?.results || [];
+  return items.slice(0, ctx.n)
+    .filter((r) => r.url)
+    .map((r) => ({ title: r.title || r.url, url: r.url, snippet: (r.content || "").slice(0, 400) }));
+}
+
 const ENGINES = {
   ddg: engineDDG,
   bing: engineBing,
@@ -334,6 +431,11 @@ const ENGINES = {
   tavily: { fn: engineTavily, key: "TAVILY_API_KEY" },
   serper: { fn: engineSerper, key: "SERPER_API_KEY" },
   exa: { fn: engineExa, key: "EXA_API_KEY" },
+  firecrawl: { fn: engineFirecrawl, key: "FIRECRAWL_API_KEY" },
+  bocha: { fn: engineBocha, key: "BOCHA_API_KEY" },
+  metaso: { fn: engineMetaso, key: "METASO_API_KEY" },
+  linkup: { fn: engineLinkup, key: "LINKUP_API_KEY" },
+  ollama: { fn: engineOllama, key: "OLLAMA_API_KEY" },
   // Keyless backup engines: anonymous quotas are low, so they stay OFF by
   // default. Opt in via --engine or the EASY_WEB_SEARCH_ENGINES env var.
   anysearch: { fn: engineAnysearch, key: "ANYSEARCH_API_KEY", optionalKey: true, backup: true },
