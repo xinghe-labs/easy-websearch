@@ -1,0 +1,14 @@
+# Normalize all line endings to LF in the repo and in working copies.
+# Prevents CRLF churn between Windows/Linux contributors and keeps
+# shell scripts executable.
+* text=auto eol=lf
+
+# Windows-only files that genuinely need CRLF
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary safety net
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
