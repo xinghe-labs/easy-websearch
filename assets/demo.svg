@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="480" viewBox="0 0 900 480" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13">
+<rect width="100%" height="100%" rx="10" fill="#0d1117"/>
+<rect width="100%" height="36" rx="10" fill="#161b22"/>
+<rect y="26" width="100%" height="10" fill="#161b22"/>
+<circle cx="18" cy="18" r="6" fill="#ff5f57"/>
+<circle cx="40" cy="18" r="6" fill="#febc2e"/>
+<circle cx="62" cy="18" r="6" fill="#28c840"/>
+<text x="450" text-anchor="middle" y="23" fill="#8b949e">easy-websearch — real output</text>
+<text x="24" y="60" fill="#7ee787" xml:space="preserve">$ node scripts/search.mjs &quot;大模型 本地部署&quot; --lang zh -n 3</text>
+<text x="24" y="82" fill="#e6edf3" xml:space="preserve"></text>
+<text x="24" y="104" fill="#8b949e" xml:space="preserve">engines:</text>
+<text x="24" y="126" fill="#ffa198" xml:space="preserve">  ddg: FAILED (timeout) in 5417ms</text>
+<text x="24" y="148" fill="#79c0ff" xml:space="preserve">  bing: 6 results in 541ms</text>
+<text x="24" y="170" fill="#e6edf3" xml:space="preserve"></text>
+<text x="24" y="192" fill="#e6edf3" xml:space="preserve">1. 大（汉语文字）_百度百科</text>
+<text x="24" y="214" fill="#e6edf3" xml:space="preserve">   https://baike.baidu.com/item/%E5%A4%A7/34128</text>
+<text x="24" y="236" fill="#e6edf3" xml:space="preserve">   大（拼音：dà、dài、tài）是汉语一级通用规范汉字（常用字）。 此字始见于商代甲骨文及商代金文，其古字形像一个正面站立的人。 …</text>
+<text x="24" y="258" fill="#d2a8ff" xml:space="preserve">   [bing]</text>
+<text x="24" y="280" fill="#e6edf3" xml:space="preserve">2. 大 dà、dài、tài - 汉典</text>
+<text x="24" y="302" fill="#e6edf3" xml:space="preserve">   https://www.zdic.net/hans/%E5%A4%A7</text>
+<text x="24" y="324" fill="#e6edf3" xml:space="preserve">   书证 大，天大地大人亦大，故大象人形。 古文大也，籀文介，改古文亦象人形。 凡大人、大夫、太子、太君，皆尊词 —— 《说文》 …</text>
+<text x="24" y="346" fill="#d2a8ff" xml:space="preserve">   [bing]</text>
+<text x="24" y="368" fill="#e6edf3" xml:space="preserve">3. 大的意思,大的解释,大的拼音,大的部首,大的笔顺-汉语国学</text>
+<text x="24" y="390" fill="#e6edf3" xml:space="preserve">   https://www.hanyuguoxue.com/zidian/zi-22823</text>
+<text x="24" y="412" fill="#e6edf3" xml:space="preserve">   大是多音字，拼音是dà、dài、tài，大字共3画，部首是大部，本页介绍大字的意思，大的详细解释，大的读音、笔顺，还包括大的翻译 …</text>
+<text x="24" y="434" fill="#d2a8ff" xml:space="preserve">   [bing]</text>
+</svg>

@@ -1,5 +1,7 @@
 # easy-websearch
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 Multi-engine web search + page reader for AI coding agents — as a single
 [Agent Skills](https://agentskills.io)-compatible skill folder.
 
@@ -99,6 +101,8 @@ engines:
    本文分享大模型本地部署基础知识...
    [bing, ddg]          ← hit by both engines ⇒ ranked first
 ```
+
+<p align="center"><img src="assets/demo.svg" alt="easy-websearch real search output: engines status + fused results" width="720"></p>
 
 ## How fusion works
 
