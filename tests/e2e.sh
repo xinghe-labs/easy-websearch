@@ -64,6 +64,18 @@ const s = d.engines.find(e => e.name === 'searxng');
 if (!s || s.ok !== false) process.exit(1);"
 check "searxng activates with env (fails soft on bad URL)" $?
 
+# --- v1.6.1: sogouweb + so360 in the no-key baseline ---
+node scripts/search.mjs "webgpu" -n 1 --json 2>/dev/null | json "
+const names = d.engines.map(e => e.name);
+if (!names.includes('sogouweb') || !names.includes('so360')) process.exit(1);"
+check "sogouweb + so360 in default pool" $?
+
+node scripts/search.mjs "webgpu" -n 1 --engine so360 --json 2>/dev/null | json "
+const s = d.engines.find(e => e.name === 'so360');
+if (!s || !s.ok) process.exit(1);
+if (!d.results[0].url.startsWith('http')) process.exit(1);"
+check "so360 resolves wrapper links" $?
+
 # --- doctor BYOK hints ---
 node scripts/doctor.mjs 2>/dev/null | grep -q 'BRAVE_API_KEY not set — get it: brave.com/search/api'
 check "doctor SKIP rows show key signup links" $?
