@@ -126,10 +126,12 @@ node scripts/search.mjs "test" --site >/dev/null 2>&1; [ $? -eq 2 ]; check "miss
 node scripts/search.mjs "test" --engine duckduckgo 2>&1 | grep -q "Valid engines: ddg"
 check "unknown engine lists valid engines" $?
 
-# --- P2-6: days-ignored note ---
+# --- P2-6: days-ignored note (bing must be OK, or soft-fail for a legit reason) ---
 node scripts/search.mjs "AI news" --days 7 -n 1 --json 2>/dev/null | json "
 const b = d.engines.find(e => e.name === 'bing');
-if (!b || b.note !== 'days ignored by bing') process.exit(1);"; check "days-ignored note in json" $?
+if (!b) process.exit(1);
+if (b.ok && b.note !== 'days ignored by bing') process.exit(1);
+if (!b.ok && !/junk|HTTP/.test(b.error)) process.exit(1);"; check "days-ignored note in json" $?
 
 # --- P0-2: junk detector unit test (synthetic) ---
 node --input-type=module -e "

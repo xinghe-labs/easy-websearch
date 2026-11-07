@@ -297,7 +297,7 @@ function looksLikeJunk(results, query) {
   const words = query.toLowerCase().match(/[a-z][a-z0-9+#.-]{2,}/g);
   if (words && words.length) {
     const anyHit = results.some((r) => {
-      const hay = `${r.title} ${r.url}`.toLowerCase();
+      const hay = `${r.title} ${r.url} ${r.snippet}`.toLowerCase();
       return words.some((w) => hay.includes(w));
     });
     if (!anyHit) return true;

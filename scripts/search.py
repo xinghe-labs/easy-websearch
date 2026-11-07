@@ -248,7 +248,7 @@ def _looks_like_junk(results, query):
     words = re.findall(r"[a-z][a-z0-9+#.-]{2,}", query.lower())
     if words:
         any_hit = any(
-            any(w in f"{r['title']} {r['url']}".lower() for w in words)
+            any(w in f"{r['title']} {r['url']} {r['snippet']}".lower() for w in words)
             for r in results
         )
         if not any_hit:
