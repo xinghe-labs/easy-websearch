@@ -591,9 +591,17 @@ async function main() {
     process.exit(2);
   }
   const ctx = { ...args, query: buildQuery(args) };
+  if (args.engines) {
+    const requested = args.engines.split(",").map((s) => s.trim()).filter(Boolean);
+    const unknown = requested.filter((n) => !ENGINES[n]);
+    if (unknown.length) {
+      console.error(`Unknown engine(s): ${unknown.join(", ")}\nValid engines: ${Object.keys(ENGINES).join(", ")}`);
+      process.exit(2);
+    }
+  }
   let engines = availableEngines(args.engines);
   if (engines.length === 0) {
-    console.error("No search engines available. Baseline ddg/bing need network; keyed engines need their env vars.");
+    console.error("No search engines available (baseline ddg/bing need network; keyed engines need their env vars).\nValid engines: " + Object.keys(ENGINES).join(", "));
     process.exit(2);
   }
 
@@ -651,7 +659,7 @@ async function main() {
     const engineLine = allEngines
       .map((s) => `${s.name}: ${s.ok ? s.count + " results" : s.count === 0 && s.ms === 0 && s.error.startsWith("skipped") ? s.error : "FAILED (" + s.error + ")"} in ${s.ms}ms`)
       .join("\n  ");
-    console.error(`engines:\n  ${engineLine}\n`);
+    console.log(`engines:\n  ${engineLine}\n`);
     if (fused.length === 0) {
       console.error("No results from any engine.");
       process.exit(1);
@@ -670,4 +678,4 @@ import { pathToFileURL } from "node:url";
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) await main();
 
-export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk };
+export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk, cooldownPath };

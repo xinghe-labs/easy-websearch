@@ -126,6 +126,20 @@ node scripts/doctor.mjs        # 每引擎状态、延迟、配置缺失一目�
 python3 scripts/doctor.py --json
 ```
 
+## 故障排查
+
+**某引擎显示 `skipped (cooldown: ...)`** —— 它最近失败过（超时/反爬/key 错误）。
+失败引擎会在后续默认搜索中被跳过 10 分钟，避免每次都白烧请求。状态存在
+`$XDG_CACHE_HOME/easy-websearch/cooldowns.json`（默认 `~/.cache/...`）。
+用 `node scripts/doctor.mjs --clear-cooldown` 重置；单次用 `--no-cooldown`
+绕过；或显式点名引擎（`--engine ddg`）。
+
+**DDG 超时 / HTTP 202** —— DuckDuckGo 封锁部分网络。Bing 在多数网络可达；
+设置 `HTTPS_PROXY` 也有帮助（两个运行时都会遵守）。
+
+**Bing 提示 `bot junk detected`** —— Bing 返回了伪装成结果的反爬页。护栏
+已让该引擎软失败、其他引擎接管；稍后重试或改用配 key 的引擎。
+
 ## 环境要求
 
 - Node ≥ 18（`scripts/*.mjs`）或 Python ≥ 3.11（`scripts/*.py`）——有其一即可

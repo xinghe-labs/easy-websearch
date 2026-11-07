@@ -101,8 +101,10 @@ Interpreting results:
   engine failed.
 - All engines failed → report the errors; suggest setting an API key.
 - Engines marked `skipped (cooldown: ...)` failed recently; the cooldown
-  avoids re-burning requests on them. Override with `--engine <name>` or
-  `--no-cooldown` when the user asks to retry.
+  avoids re-burning requests on them (state:
+  `$XDG_CACHE_HOME/easy-websearch/cooldowns.json`). Reset with
+  `node scripts/doctor.mjs --clear-cooldown`; override with `--engine <name>`
+  or `--no-cooldown` when the user asks to retry.
 
 ## Health check (doctor)
 

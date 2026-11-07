@@ -553,9 +553,17 @@ def main():
     ctx = {"query": build_query(args), "n": args.num, "days": args.days,
            "lang": args.lang.lower(), "timeout": args.timeout, "env": env}
     engines = available_engines(args.engine, env)
+    if args.engine:
+        requested = [s.strip() for s in args.engine.split(",") if s.strip()]
+        unknown = [n for n in requested if n not in ENGINES]
+        if unknown:
+            print(f"Unknown engine(s): {', '.join(unknown)}\n"
+                  f"Valid engines: {', '.join(ENGINES)}", file=sys.stderr)
+            sys.exit(2)
     if not engines:
-        print("No search engines available. Baseline ddg/bing need network; "
-              "keyed engines need their env vars.", file=sys.stderr)
+        print("No search engines available (baseline ddg/bing need network; "
+              "keyed engines need their env vars).\n"
+              f"Valid engines: {', '.join(ENGINES)}", file=sys.stderr)
         sys.exit(2)
 
     # Skip engines in active cooldown (default selection only; explicit
@@ -617,7 +625,7 @@ def main():
             f"{s['name']}: {s['count']} results in {s['ms']}ms" if s["ok"]
             else f"{s['name']}: {s['error']}" if s["error"].startswith("skipped")
             else f"{s['name']}: FAILED ({s['error']}) in {s['ms']}ms" for s in all_engines)
-        print(f"engines:\n  {lines}\n", file=sys.stderr)
+        print(f"engines:\n  {lines}\n")
         if not fused:
             print("No results from any engine.", file=sys.stderr)
             sys.exit(1)

@@ -10,7 +10,8 @@
  * per-engine status, latency, and configuration gaps. Exit code: 0 all tested
  * engines OK, 1 any failure, 2 nothing testable.
  */
-import { ENGINES, availableEngines } from "./search.mjs";
+import { readFileSync } from "node:fs";
+import { ENGINES, availableEngines, cooldownPath } from "./search.mjs";
 
 const args = process.argv.slice(2);
 const getOpt = (name, dflt) => {
@@ -21,12 +22,28 @@ const timeoutSec = parseInt(getOpt("--timeout", "8"), 10) || 8;
 const asJson = args.includes("--json");
 const timeoutMs = timeoutSec * 1000;
 
+// --clear-cooldown: reset the failure-cooldown state and exit.
+if (args.includes("--clear-cooldown")) {
+  const { rmSync } = await import("node:fs");
+  try { rmSync(cooldownPath()); console.log("cooldown state cleared: " + cooldownPath()); }
+  catch { console.log("no cooldown state to clear (" + cooldownPath() + ")"); }
+  process.exit(0);
+}
+
 const ALL = Object.keys(ENGINES);
 const defaultSet = availableEngines("");
 const optIn = (process.env.EASY_WEB_SEARCH_ENGINES || "")
   .split(",").map((s) => s.trim()).filter(Boolean);
 
 const ctx = { query: "hello world", n: 1, days: 0, lang: "", timeout: timeoutMs, engines: "", json: false };
+
+// Surface cooldown state so users see why an engine was being skipped.
+let cooldownState = {};
+try { cooldownState = JSON.parse(readFileSync(cooldownPath(), "utf8")) || {}; } catch { /* no state file */ }
+const cooldownNote = (name) => {
+  const cd = cooldownState[name];
+  return cd?.until > Date.now() ? ` [cooldown: ${cd.reason || "recent failure"}]` : "";
+};
 
 const rows = await Promise.all(ALL.map(async (name) => {
   const e = ENGINES[name];
@@ -45,10 +62,10 @@ const rows = await Promise.all(ALL.map(async (name) => {
     return {
       engine: name, status: "OK", ms: Date.now() - t0,
       note: `${results.length} result${results.length === 1 ? "" : "s"}` +
-        (backup ? " [backup]" : "") + (enabled ? "" : " [not in default set]"),
+        (backup ? " [backup]" : "") + (enabled ? "" : " [not in default set]") + cooldownNote(name),
     };
   } catch (err) {
-    return { engine: name, status: "FAIL", ms: Date.now() - t0, note: err.message };
+    return { engine: name, status: "FAIL", ms: Date.now() - t0, note: err.message + cooldownNote(name) };
   }
 }));
 
@@ -61,6 +78,7 @@ if (asJson) {
   console.log(JSON.stringify({
     node: process.version,
     proxy: proxy || null,
+    cooldownStateFile: cooldownPath(),
     engines: rows,
     summary: { tested: tested.length, failed: failed.length, skipped: rows.length - tested.length },
   }, null, 2));

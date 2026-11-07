@@ -26,7 +26,22 @@ def main() -> None:
     p = argparse.ArgumentParser(description="easy-websearch doctor")
     p.add_argument("--timeout", type=int, default=8)
     p.add_argument("--json", action="store_true")
+    p.add_argument("--clear-cooldown", action="store_true",
+                   help="reset the failure-cooldown state and exit")
     args = p.parse_args()
+
+    if args.clear_cooldown:
+        from search import _cooldown_path
+        path = _cooldown_path()
+        try:
+            os.remove(path)
+            print(f"cooldown state cleared: {path}")
+        except FileNotFoundError:
+            print(f"no cooldown state to clear ({path})")
+        except OSError as e:
+            print(f"failed to clear cooldown state ({path}): {e}", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
 
     env = {k: os.environ[k] for k in
            ("BRAVE_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY", "EXA_API_KEY",
@@ -40,6 +55,18 @@ def main() -> None:
            "timeout": args.timeout, "env": env}
 
     rows: list[dict] = []
+
+    from search import _cooldown_path
+    try:
+        with open(_cooldown_path(), encoding="utf-8") as f:
+            cooldown_state = json.load(f) or {}
+    except (OSError, ValueError):
+        cooldown_state = {}
+    now_ms = int(time.time() * 1000)
+
+    def cooldown_note(name: str) -> str:
+        cd = cooldown_state.get(name) or {}
+        return f" [cooldown: {cd.get('reason', 'recent failure')}]" if cd.get("until", 0) > now_ms else ""
 
     def probe(name: str) -> dict:
         fn, key, flags = ENGINES[name]
@@ -55,10 +82,11 @@ def main() -> None:
                 note += " [backup]"
             if name not in default_set and name not in opt_in:
                 note += " [not in default set]"
+            note += cooldown_note(name)
             return {"engine": name, "status": "OK", "ms": int((time.time() - t0) * 1000), "note": note}
         except Exception as e:
             return {"engine": name, "status": "FAIL", "ms": int((time.time() - t0) * 1000),
-                    "note": str(e)}
+                    "note": str(e) + cooldown_note(name)}
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(ENGINES)) as ex:
         futures = [ex.submit(probe, name) for name in ENGINES]
@@ -75,6 +103,7 @@ def main() -> None:
         print(json.dumps({
             "python": sys.version.split()[0],
             "proxy": proxy or None,
+            "cooldown_state_file": _cooldown_path(),
             "engines": rows,
             "summary": {"tested": len(tested), "failed": len(failed),
                         "skipped": len(rows) - len(tested)},

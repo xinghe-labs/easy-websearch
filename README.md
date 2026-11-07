@@ -134,6 +134,23 @@ node scripts/doctor.mjs        # per-engine status, latency, config gaps
 python3 scripts/doctor.py --json
 ```
 
+## Troubleshooting
+
+**An engine says `skipped (cooldown: ...)`** — it failed recently (timeout,
+bot-block, bad key). Failing engines are skipped for 10 minutes on default
+searches so they don't burn every request. State lives in
+`$XDG_CACHE_HOME/easy-websearch/cooldowns.json` (`~/.cache/...` by default).
+Reset it with `node scripts/doctor.mjs --clear-cooldown`, bypass per-run with
+`--no-cooldown`, or name the engine explicitly (`--engine ddg`).
+
+**DDG fails with timeout / HTTP 202** — DuckDuckGo blocks some networks.
+Bing stays reachable from most networks; setting `HTTPS_PROXY` also helps
+(both runtimes honor it).
+
+**Bing says `bot junk detected`** — Bing served an anti-bot page disguised
+as results. The guard failed the engine soft so other engines cover; retry
+later or use a keyed engine.
+
 ## Requirements
 
 - Node ≥ 18 (`scripts/*.mjs`) or Python ≥ 3.11 (`scripts/*.py`) — one is enough
