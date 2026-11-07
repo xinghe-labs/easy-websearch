@@ -135,5 +135,16 @@ assert j(junk,'webgpu') is True and j(good,'webgpu') is False"
   check "py junk detector (synthetic)" $?
 fi
 
+# --- setup: one-command onboarding (isolated target) ---
+SETUP_TARGET="$(mktemp -d)"
+node scripts/setup.mjs --dir "$SETUP_TARGET" >/tmp/setup.out 2>&1
+[ -f "$SETUP_TARGET/easy-websearch/SKILL.md" ] && [ -f "$SETUP_TARGET/easy-websearch/scripts/doctor.mjs" ]
+check "setup installs skill folder" $?
+grep -q "engines OK:" /tmp/setup.out; check "setup runs doctor from installed copy" $?
+node scripts/setup.mjs --dir "$SETUP_TARGET" 2>&1 | grep -q "updated"
+check "setup second run updates in place" $?
+node scripts/setup.mjs --list >/dev/null 2>&1; check "setup --list exits 0" $?
+rm -rf "$SETUP_TARGET"
+
 echo; echo "== $PASS passed, $FAIL failed =="
 exit $FAIL

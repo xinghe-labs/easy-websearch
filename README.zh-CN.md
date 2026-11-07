@@ -36,6 +36,28 @@
 
 <p align="center"><img src="assets/demo.svg" alt="easy-websearch real search output: engines status + fused results" width="720"></p>
 
+## 快速上手
+
+**1. 安装**（一条命令，装入 Claude Code 及所有 Agent Skills 兼容工具）：
+
+```bash
+npx skills add xinghe-labs/easy-websearch
+```
+
+**2. 验证**（可选但推荐 —— 这一步不需要任何 API key）：
+
+```bash
+node ~/.agents/skills/easy-websearch/scripts/doctor.mjs
+```
+
+**3. 使用** —— 直接对 agent 说话即可。无需配置，无需记参数：
+
+> “帮我查一下 rust async runtime 的最新资料” · “search for the latest webgpu news” · “读一下这个网页讲了什么：https://…”
+
+到此为止 —— 基线（DuckDuckGo + Bing）零 API key 可用。可选的
+key（Brave/Tavily/Serper/Exa/Firecrawl/Bocha/Metaso/Linkup/Ollama）会自动
+升级引擎池 —— 见[安装](#安装)。
+
 ## 为什么选 easy-web-search
 
 | | agent 内置搜索 | 单引擎类 skill | **easy-web-search** |

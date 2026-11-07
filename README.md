@@ -34,6 +34,28 @@ query ──► [ ddg ] [ bing ] [ brave ] [ tavily ] [ serper ] [ exa ]
 Plus two keyless backup engines (AnySearch, Keenable) for when the
 baselines degrade, a `doctor` self-check command, and a failure cooldown.
 
+## Quick start
+
+**1. Install** (one command; into Claude Code and any Agent-Skills agent):
+
+```bash
+npx skills add xinghe-labs/easy-websearch
+```
+
+**2. Verify** (optional but recommended — no API key needed for this):
+
+```bash
+node ~/.agents/skills/easy-websearch/scripts/doctor.mjs
+```
+
+**3. Use it** — just talk to your agent. No configuration, no flags to remember:
+
+> “帮我查一下 rust async runtime 的最新资料” · “search for the latest webgpu news” · “读一下这个网页讲了什么：https://…”
+
+That's it — the baseline (DuckDuckGo + Bing) works with zero API keys.
+Optional keys (Brave/Tavily/Serper/Exa/Firecrawl/Bocha/Metaso/Linkup/Ollama)
+upgrade the engine pool automatically — see [Install](#install).
+
 ## Why easy-websearch
 
 | | built-in web tools | single-engine skills | **easy-websearch** |

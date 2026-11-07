@@ -4,6 +4,15 @@ All notable changes are summarized here. Full notes per version live in
 [`.github/releases/`](.github/releases/) and on the
 [Releases page](https://github.com/xinghe-labs/easy-websearch/releases).
 
+## [1.4.0] — 2026-11-07
+
+- **One-command onboarding**: `scripts/setup.mjs` / `setup.py` — detects
+  agent skill directories (~/.claude/skills, ~/.agents/skills, project-level),
+  installs the skill into them (in-place update on re-run), runs the doctor
+  health check from the installed copy, and prints next steps
+- README Quick start section (install → verify → talk to your agent),
+  bilingual
+
 ## [1.3.0] — 2026-11-07
 
 UX-review fixes (see [`docs/ux-review-2026-11-07.md`](docs/ux-review-2026-11-07.md)):
