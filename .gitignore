@@ -9,3 +9,7 @@ Thumbs.db
 sandbox/
 *.log
 __pycache__/
+
+# Secrets (if users keep keys in a .env file, never commit it)
+.env
+.env.*
