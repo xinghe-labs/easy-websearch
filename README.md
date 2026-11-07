@@ -1,4 +1,4 @@
-# easy-web-search
+# easy-websearch
 
 Multi-engine web search + page reader for AI coding agents — as a single
 [Agent Skills](https://agentskills.io)-compatible skill folder.
@@ -22,9 +22,9 @@ query ──► [ ddg ] [ bing ] [ brave ] [ tavily ] [ serper ] [ exa ]
 Plus two keyless backup engines (AnySearch, Keenable) for when the
 baselines degrade.
 
-## Why easy-web-search
+## Why easy-websearch
 
-| | built-in web tools | single-engine skills | **easy-web-search** |
+| | built-in web tools | single-engine skills | **easy-websearch** |
 |---|---|---|---|
 | Works with no API key | agent-dependent | often not | ✅ DDG + Bing baseline |
 | Survives engine blocks/rate limits | n/a | ❌ single point of failure | ✅ failover + fusion |
@@ -41,16 +41,16 @@ Copy or clone this folder into your skills directory:
 
 ```bash
 # user-level
-git clone https://github.com/<you>/easy-web-search ~/.claude/skills/easy-web-search
+git clone https://github.com/<you>/easy-websearch ~/.claude/skills/easy-websearch
 
 # or project-level
-git clone https://github.com/<you>/easy-web-search .claude/skills/easy-web-search
+git clone https://github.com/<you>/easy-websearch .claude/skills/easy-websearch
 ```
 
 With the [skills CLI](https://skills.sh):
 
 ```bash
-npx skills add <you>/easy-web-search
+npx skills add <you>/easy-websearch
 ```
 
 ### Optional engine keys

@@ -1,5 +1,5 @@
 ---
-name: easy-web-search
+name: easy-websearch
 description: |
   Multi-engine web search with reliability-first failover and Chinese source
   optimization. Zero-config: works without any API key (DuckDuckGo + Bing);
@@ -15,7 +15,7 @@ description: |
   Runs offline via bundled zero-dependency scripts (Node or Python).
 ---
 
-# easy-web-search
+# easy-websearch
 
 Multi-engine web search + page reader as a self-contained script tool.
 Free without API keys; better with them.

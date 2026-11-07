@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * easy-web-search — multi-engine web search with RRF fusion and graceful degradation.
+ * easy-websearch — multi-engine web search with RRF fusion and graceful degradation.
  * Zero npm dependencies. Node >= 18.
  *
  * Usage:
@@ -54,7 +54,8 @@ function parseArgs(argv) {
 // need it. Implement a minimal CONNECT tunnel ourselves. Zero-dep.
 function proxyConnect(proxyUrl, host, port) {
   return new Promise((resolve, reject) => {
-    const pu = new URL(proxyUrl);
+    let pu;
+    try { pu = new URL(proxyUrl); } catch { return reject(new Error(`invalid proxy URL: ${proxyUrl}`)); }
     const req = http.request({
       host: pu.hostname,
       port: parseInt(pu.port, 10) || 80,
@@ -73,7 +74,8 @@ function proxyConnect(proxyUrl, host, port) {
 }
 
 function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_TIMEOUT } = {}, depth = 0) {
-  const u = new URL(url);
+  let u;
+  try { u = new URL(url); } catch { return Promise.reject(new Error(`invalid URL: ${url}`)); }
   const isHttps = u.protocol === "https:";
   const proxy =
     process.env.HTTPS_PROXY || process.env.https_proxy ||
@@ -129,6 +131,14 @@ function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_
 }
 
 // ------------------------------------------------------------ helpers ----
+function parseJson(body) {
+  try {
+    return JSON.parse(body);
+  } catch (e) {
+    throw new Error(`invalid JSON response: ${e.message}`);
+  }
+}
+
 const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ensp: " ", emsp: " ", thinsp: " ", zwnj: "", zwj: "", middot: "·", mdash: "—", ndash: "–", hellip: "…", ldquo: "“", rdquo: "”", lsquo: "‘", rsquo: "’", copy: "©", "#39": "'", "#x27": "'" };
 function decodeEntities(s) {
   return s.replace(/&(#x?[0-9a-fA-F]+|[a-z]+);/g, (m, e) => {
@@ -233,7 +243,7 @@ async function engineBrave(ctx) {
     timeout: ctx.timeout,
   });
   if (status !== 200) throw new Error(`HTTP ${status}`);
-  const items = JSON.parse(body)?.web?.results || [];
+  const items = parseJson(body)?.web?.results || [];
   return items.map((r) => ({ title: r.title, url: r.url, snippet: r.description || "" }));
 }
 
@@ -246,7 +256,7 @@ async function engineTavily(ctx) {
     timeout: ctx.timeout,
   });
   if (status !== 200) throw new Error(`HTTP ${status}`);
-  const items = JSON.parse(body)?.results || [];
+  const items = parseJson(body)?.results || [];
   return items.map((r) => ({ title: r.title || r.url, url: r.url, snippet: (r.content || "").slice(0, 400) }));
 }
 
@@ -260,7 +270,7 @@ async function engineSerper(ctx) {
     timeout: ctx.timeout,
   });
   if (status !== 200) throw new Error(`HTTP ${status}`);
-  const items = JSON.parse(body)?.organic || [];
+  const items = parseJson(body)?.organic || [];
   return items.map((r) => ({ title: r.title, url: r.link, snippet: r.snippet || "" }));
 }
 
@@ -277,7 +287,7 @@ async function engineExa(ctx) {
     timeout: ctx.timeout,
   });
   if (status !== 200) throw new Error(`HTTP ${status}`);
-  const items = JSON.parse(body)?.results || [];
+  const items = parseJson(body)?.results || [];
   return items.map((r) => ({ title: r.title || r.url, url: r.url, snippet: (r.text || r.summary || "").slice(0, 400) }));
 }
 
@@ -290,7 +300,7 @@ async function engineAnysearch(ctx) {
     method: "POST", headers, body: JSON.stringify(payload), timeout: ctx.timeout,
   });
   if (status !== 200) throw new Error(`HTTP ${status}`);
-  const res = JSON.parse(body);
+  const res = parseJson(body);
   if (res.code !== 0) throw new Error(res.message || `code ${res.code}`);
   const items = res.data?.results || [];
   return items.map((r) => ({ title: r.title || r.url, url: r.url, snippet: (r.snippet || "").slice(0, 400) }));
@@ -306,12 +316,12 @@ async function engineKeenable(ctx) {
   };
   const headers = { "content-type": "application/json" };
   if (keyed) headers["x-api-key"] = process.env.KEENABLE_API_KEY;
-  else headers["x-keenable-title"] = "easy-web-search"; // required for keyless
+  else headers["x-keenable-title"] = "easy-websearch"; // required for keyless
   const { status, body } = await fetchText(`https://api.keenable.ai${path}`, {
     method: "POST", headers, body: JSON.stringify(payload), timeout: ctx.timeout,
   });
   if (status !== 200) throw new Error(`HTTP ${status}`);
-  const items = JSON.parse(body)?.results || [];
+  const items = parseJson(body)?.results || [];
   return items
     .filter((r) => r.url && !r.url.startsWith("https://cards.keenable.ai/")) // ephemeral cards
     .map((r) => ({ title: r.title, url: r.url, snippet: (r.snippet || "").slice(0, 400) }));

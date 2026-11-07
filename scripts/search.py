@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""easy-web-search — multi-engine web search with RRF fusion and graceful degradation.
+"""easy-websearch — multi-engine web search with RRF fusion and graceful degradation.
 
 Zero dependencies (stdlib only). Python >= 3.11 (datetime.UTC). Honors
 HTTP(S)_PROXY env vars automatically via urllib.
@@ -252,7 +252,7 @@ def engine_keenable(ctx):
     if keyed:
         headers["x-api-key"] = ctx["env"]["KEENABLE_API_KEY"]
     else:
-        headers["x-keenable-title"] = "easy-web-search"  # required for keyless
+        headers["x-keenable-title"] = "easy-websearch"  # required for keyless
     status, body = http_text(f"https://api.keenable.ai{path}", method="POST",
                              data=json.dumps(payload).encode(), headers=headers,
                              timeout=ctx["timeout"])
@@ -320,7 +320,7 @@ def fuse(engine_results):
 
 # ------------------------------------------------------------------- main ----
 def main():
-    p = argparse.ArgumentParser(description="easy-web-search: multi-engine web search")
+    p = argparse.ArgumentParser(description="easy-websearch: multi-engine web search")
     p.add_argument("query", nargs="+")
     p.add_argument("-n", "--num", type=int, default=10)
     p.add_argument("--days", type=int, default=0)

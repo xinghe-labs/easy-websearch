@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * easy-web-search fetch — extract readable content from a URL as Markdown.
+ * easy-websearch fetch — extract readable content from a URL as Markdown.
  * Zero npm dependencies. Node >= 18.
  *
  * Usage:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""easy-web-search fetch — extract readable content from a URL as Markdown.
+"""easy-websearch fetch — extract readable content from a URL as Markdown.
 
 Zero dependencies (stdlib only). Python >= 3.11. Honors HTTP(S)_PROXY env
 vars automatically via urllib.
@@ -124,7 +124,7 @@ def extract(url: str, timeout: float, max_chars: int) -> dict:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="easy-web-search fetch: URL → Markdown")
+    p = argparse.ArgumentParser(description="easy-websearch fetch: URL → Markdown")
     p.add_argument("url")
     p.add_argument("--json", action="store_true")
     p.add_argument("--timeout", type=int, default=15)

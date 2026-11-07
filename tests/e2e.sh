@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E2E test matrix for easy-web-search. Network-dependent; run manually or in CI.
+# E2E test matrix for easy-websearch. Network-dependent; run manually or in CI.
 # JSON assertions use node (present wherever the scripts can run).
 set -u
 PASS=0; FAIL=0

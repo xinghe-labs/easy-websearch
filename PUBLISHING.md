@@ -1,12 +1,12 @@
 # Publishing checklist
 
-Steps to ship easy-web-search to the skill marketplaces. Replace `<you>` with
+Steps to ship easy-websearch to the skill marketplaces. Replace `<you>` with
 the GitHub username.
 
 ## 1. GitHub repo
 
-- [ ] Create public repo `<you>/easy-web-search` (description: "Zero-config multi-engine web search skill for AI agents — free without API keys")
-- [ ] `git remote add origin git@github.com:<you>/easy-web-search.git && git push -u origin main`
+- [ ] Create public repo `<you>/easy-websearch` (description: "Zero-config multi-engine web search skill for AI agents — free without API keys")
+- [ ] `git remote add origin git@github.com:<you>/easy-websearch.git && git push -u origin main`
 - [ ] About topics: `agent-skills`, `claude-code`, `web-search`, `skill`, `ai-agents`, `search`
 - [ ] Enable Issues; keep the `engine-probe` workflow enabled (Settings → Actions)
 
@@ -14,7 +14,7 @@ the GitHub username.
 
 | Channel | How | Priority |
 |---|---|---|
-| [skills.sh](https://skills.sh) | Auto-lists repos installable via `npx skills add <you>/easy-web-search` — verify after push | ⭐ highest traffic |
+| [skills.sh](https://skills.sh) | Auto-lists repos installable via `npx skills add <you>/easy-websearch` — verify after push | ⭐ highest traffic |
 | [awesomeskill.ai](https://awesomeskill.ai) | Submit URL via site form | high |
 | [ComposioHQ/awesome-claude-skills](https://github.com/ComposioHQ/awesome-claude-skills) | PR adding entry to the curated list | high |
 | [agentscli marketplace](https://marketplace.agentscli.com) | Submit via catalog form | medium |
