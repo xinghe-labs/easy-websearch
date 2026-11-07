@@ -114,6 +114,34 @@ METASO_API_KEY=fake node scripts/search.mjs "test" -n 1 --json --no-cooldown 2>/
 const m = d.engines.find(e => e.name === 'metaso');
 if (!m || m.error.startsWith('skipped')) process.exit(1);"
 check "--no-cooldown bypasses cooldown" $?
+
+# --- v1.6: --direct flag + cooldown escalation ---
+# 状态文件断言统一用 node(与被测 runtime 同路径解释, git-bash 下无 python3)
+METASO_API_KEY=fake node scripts/search.mjs "test" -n 1 --direct --json >/dev/null 2>&1
+node -e "
+const fs = require('fs');
+const p = process.env.XDG_CACHE_HOME + '/easy-websearch/cooldowns.json';
+const d = JSON.parse(fs.readFileSync(p, 'utf8'));
+if (d.metaso.failures !== 1) process.exit(1);"
+check "--direct flag runs and records failure" $?
+
+node -e "
+const fs = require('fs');
+const p = process.env.XDG_CACHE_HOME + '/easy-websearch/cooldowns.json';
+const d = JSON.parse(fs.readFileSync(p, 'utf8'));
+d.metaso.until = 0; fs.writeFileSync(p, JSON.stringify(d));"
+METASO_API_KEY=fake node scripts/search.mjs "test" -n 1 --json 2>/dev/null | json "
+const m = d.engines.find(e => e.name === 'metaso');
+if (!m || m.ok !== false) process.exit(1);"
+node -e "
+const fs = require('fs');
+const p = process.env.XDG_CACHE_HOME + '/easy-websearch/cooldowns.json';
+const d = JSON.parse(fs.readFileSync(p, 'utf8')).metaso;
+if (d.failures !== 2) process.exit(1);"
+check "cooldown escalates on repeat failure (failures=2)" $?
+
+EASY_WEB_SEARCH_DIRECT=1 node scripts/search.mjs "test" -n 1 --json >/dev/null 2>&1
+check "EASY_WEB_SEARCH_DIRECT=1 env accepted" $?
 unset XDG_CACHE_HOME
 
 # --- P0-1: --help and flag validation ---
