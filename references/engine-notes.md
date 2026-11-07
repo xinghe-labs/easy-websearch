@@ -43,3 +43,21 @@ Neither is in the default engine set (anonymous quotas are low). Opt in via
    APIs, reachable from CN via the same proxy tunnel.
 3. DDG HTML responses sometimes arrive as anomaly/challenge pages; parser
    must treat "0 results but 200 OK" as a soft failure, not success.
+
+## Keyed engines added in v1.2
+
+Schemas verified against live docs 2026-11-07; fake-key e2e shows clean
+per-engine failures (HTTP 401 / wrapped error bodies) instead of crashes.
+
+| Engine | Method | Request | Response results | Notes |
+|---|---|---|---|---|
+| Firecrawl | `POST api.firecrawl.dev/v1/search` | `{query, limit, scrapeOptions:{formats:["markdown"]}}` | `data[] {title,url,description,markdown?}` (array or `data.web[]`) | Bearer `FIRECRAWL_API_KEY`. `/v1/scrape` also powers the fetch fallback layer (direct → firecrawl → r.jina.ai). |
+| Bocha 博查 | `POST api.bochaai.com/v1/web-search` | `{query, freshness, summary, count}` — freshness: noLimit/oneDay/oneWeek/oneMonth/oneYear (mapped from `--days`) | `data.webPages.value[] {name,url,snippet}` | Bearer `BOCHA_API_KEY`. **415 gotcha**: urllib's default form-urlencoded Content-Type beats `opener.addheaders` — fixed via a late `_HeaderInjector` handler. |
+| Metaso 秘塔 | `POST metaso.cn/api/v1/search` | `{mode:"search", q, scope:"webpage", size:"10", includeSummary, conciseSnippet}` | envelope **not formally documented** — defensive walk for URL-bearing objects | Bearer `METASO_API_KEY`. **Wraps errors in HTTP 200**: `{"errCode":2005,"errMsg":"API密钥无效"}` (curl) and `{"code":5000,"message":"系统内部错误"}` (urllib) — both shapes checked. |
+| Linkup | `POST api.linkup.so/v1/search` | `{q, depth:"standard", outputType:"searchResults"}` | `results[] {name,url,content}` | Bearer `LINKUP_API_KEY`. |
+| Ollama | `POST ollama.com/api/web_search` | `{query}` | `results[] {title,url,content}` | Bearer `OLLAMA_API_KEY`. Free account key. |
+
+Failure cooldown (v1.2): failed engines are recorded in
+`$XDG_CACHE_HOME/easy-websearch/cooldowns.json` and skipped for 10 min on
+default runs (never skip to zero; `--engine`/`--no-cooldown` bypass). This
+stops a rate-limited engine from burning every subsequent request.
