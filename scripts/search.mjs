@@ -978,11 +978,11 @@ const ENGINES = {
   arxiv: { fn: engineArxiv, key: null },
   mwmbl: { fn: engineMwmbl, key: null },
   // ── Academic / registry (official keyless APIs) — auto tier ──
-  csdn: { fn: engineCSDN, key: null, auto: true },
-  openalex: { fn: engineOpenAlex, key: null, auto: true },
+  csdn: { fn: engineCSDN, key: null },
+  openalex: { fn: engineOpenAlex, key: null },
   crossref: { fn: engineCrossref, key: null },
-  pubmed: { fn: enginePubMed, key: null, auto: true },
-  huggingface: { fn: engineHuggingFace, key: null, auto: true },
+  pubmed: { fn: enginePubMed, key: null },
+  huggingface: { fn: engineHuggingFace, key: null },
   // Keyless backup engines: anonymous quotas are low, so they stay OFF by
   // default. Opt in via --engine or the EASY_WEB_SEARCH_ENGINES env var.
   anysearch: { fn: engineAnysearch, key: "ANYSEARCH_API_KEY", optionalKey: true, backup: true },
