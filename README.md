@@ -98,6 +98,10 @@ npx skills add xinghe-labs/easy-websearch
 git clone https://github.com/xinghe-labs/easy-websearch ~/.claude/skills/easy-websearch
 ```
 
+> Behind the GFW? Direct GitHub access can be flaky — the **npm route**
+> (`npm install -g easy-websearch`) never touches GitHub and is the most
+> reliable install path there.
+
 ### As a global CLI (for your own terminal)
 
 ```bash

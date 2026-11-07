@@ -89,6 +89,9 @@ npx skills add xinghe-labs/easy-websearch
 git clone https://github.com/xinghe-labs/easy-websearch ~/.claude/skills/easy-websearch
 ```
 
+> 国内网络注意：直连 GitHub 可能不稳定（TLS 握手偶发失败）—— **npm 路径**
+> （`npm install -g easy-websearch`）完全不碰 GitHub，是国内最可靠的安装方式。
+
 ### 作为全局命令行（自己的终端）
 
 ```bash
