@@ -64,3 +64,9 @@ UX-review fixes (see [`docs/ux-review-2026-11-07.md`](docs/ux-review-2026-11-07.
   Brave / Tavily / Serper / Exa via keys) with Reciprocal Rank Fusion,
   per-engine status, URL→Markdown page reader, zero dependencies
   (Node or Python stdlib)
+
+## [1.5.1] — 2026-11-07
+
+- npm 正式发布 `easy-websearch@1.5.1`（`npx easy-websearch doctor` 免安装体验）
+- fix: npm bin dispatcher 脚本路径（npx doctor 此前 MODULE_NOT_FOUND）
+- fix: searxng 未配置 env 时给出明确引导提示；basic-auth 支持（user:pass@）
