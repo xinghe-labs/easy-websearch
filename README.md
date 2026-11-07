@@ -4,6 +4,8 @@
 
 [![engine-probe](https://github.com/xinghe-labs/easy-websearch/actions/workflows/engine-probe.yml/badge.svg)](https://github.com/xinghe-labs/easy-websearch/actions/workflows/engine-probe.yml)
 [![Release](https://img.shields.io/github/v/release/xinghe-labs/easy-websearch)](https://github.com/xinghe-labs/easy-websearch/releases)
+[![npm](https://img.shields.io/npm/v/easy-websearch)](https://www.npmjs.com/package/easy-websearch)
+[![npm downloads](https://img.shields.io/npm/dw/easy-websearch)](https://www.npmjs.com/package/easy-websearch)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2F9E4F.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/Node-%E2%89%A518-3C873A)
 ![Python](https://img.shields.io/badge/Python-%E2%89%A53.11-3776AB)
@@ -42,10 +44,15 @@ baselines degrade, a `doctor` self-check command, and a failure cooldown.
 npx skills add xinghe-labs/easy-websearch
 ```
 
+> Prefer a standalone CLI? `npm install -g easy-websearch` gives you the
+> `easy-websearch` command everywhere — no skill folder needed:
+> `easy-websearch search "query"` / `easy-websearch doctor`.
+
 **2. Verify** (optional but recommended — no API key needed for this):
 
 ```bash
 node ~/.agents/skills/easy-websearch/scripts/doctor.mjs
+easy-websearch doctor        # same check, via the npm CLI
 ```
 
 **3. Use it** — just talk to your agent. No configuration, no flags to remember:
@@ -123,6 +130,23 @@ A private instance gives you an unlimited engine with no API keys and no
 rate limits — a clean alternative to sharing accounts.
 
 ## Install
+
+### npm (global CLI)
+
+```bash
+npm install -g easy-websearch
+```
+
+Gives you the `easy-websearch` command everywhere — search / fetch / doctor /
+setup as subcommands, no skill folder needed:
+
+```bash
+easy-websearch search "大模型 本地部署" --lang zh -n 5
+easy-websearch fetch "https://example.com/article"
+easy-websearch doctor
+```
+
+Or run without installing: `npx easy-websearch@latest doctor`
 
 ### Claude Code / any Agent Skills runtime
 

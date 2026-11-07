@@ -2,6 +2,8 @@
 
 [![engine-probe](https://github.com/xinghe-labs/easy-websearch/actions/workflows/engine-probe.yml/badge.svg)](https://github.com/xinghe-labs/easy-websearch/actions/workflows/engine-probe.yml)
 [![Release](https://img.shields.io/github/v/release/xinghe-labs/easy-websearch)](https://github.com/xinghe-labs/easy-websearch/releases)
+[![npm](https://img.shields.io/npm/v/easy-websearch)](https://www.npmjs.com/package/easy-websearch)
+[![npm downloads](https://img.shields.io/npm/dw/easy-websearch)](https://www.npmjs.com/package/easy-websearch)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2F9E4F.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/Node-%E2%89%A518-3C873A)
 ![Python](https://img.shields.io/badge/Python-%E2%89%A53.11-3776AB)
@@ -44,10 +46,15 @@
 npx skills add xinghe-labs/easy-websearch
 ```
 
+> 更喜欢独立命令行？`npm install -g easy-websearch` 全局安装后随处可用
+> `easy-websearch` 命令 —— 无需 skill 目录：
+> `easy-websearch search "查询"` / `easy-websearch doctor`。
+
 **2. 验证**（可选但推荐 —— 这一步不需要任何 API key）：
 
 ```bash
 node ~/.agents/skills/easy-websearch/scripts/doctor.mjs
+easy-websearch doctor        # 同样的检查，走 npm CLI
 ```
 
 **3. 使用** —— 直接对 agent 说话即可。无需配置，无需记参数：
@@ -121,6 +128,23 @@ export SEARXNG_BASE_URL=http://localhost:8080   # 或 https://searx.example.com
 私有实例 = 无配额、无 API key 的额外引擎，也是替代“共享账号”的干净方案。
 
 ## 安装
+
+### npm（全局命令行）
+
+```bash
+npm install -g easy-websearch
+```
+
+全局安装后随处可用 `easy-websearch` 命令 —— search / fetch / doctor /
+setup 四个子命令，无需 skill 目录：
+
+```bash
+easy-websearch search "大模型 本地部署" --lang zh -n 5
+easy-websearch fetch "https://example.com/article"
+easy-websearch doctor
+```
+
+或者免安装直接跑：`npx easy-websearch@latest doctor`
 
 ### Claude Code / 任何支持 Agent Skills 的工具
 
