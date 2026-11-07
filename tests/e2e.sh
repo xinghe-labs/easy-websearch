@@ -31,10 +31,11 @@ import json,sys; d=json.load(sys.stdin); assert d['engines'] and isinstance(d['r
   check "py search --json schema" $?
   python3 scripts/search.py "test" -n 1 --json 2>/dev/null | python3 -c "
 import json,sys,os; d=json.load(sys.stdin)
+keyed={'brave','tavily','serper','exa','firecrawl','bocha','metaso','linkup','ollama'}
 for e in d['engines']:
-    if e['name'] in ('brave','tavily','serper','exa') and not os.environ.get(e['name'].upper()+'_API_KEY'):
-        raise SystemExit('keyed engine present without key')"
-  check "keyed engines hidden without keys" $?
+    if e['name'] in keyed and not os.environ.get(e['name'].upper()+'_API_KEY'):
+        raise SystemExit('keyed engine present without key: '+e['name'])"
+  check "keyed engines hidden without keys (9)" $?
 else
   echo "SKIP: python3 not found (py twins not asserted here)"
 fi
@@ -78,6 +79,27 @@ check "node fetch blocked → fallback handled" $?
 
 # --- arg validation ---
 node scripts/search.mjs >/dev/null 2>&1; [ $? -eq 2 ]; check "node search no-args exit 2" $?
+
+# --- doctor (node; python twin when python3 exists) ---
+node scripts/doctor.mjs --timeout 8 >/dev/null 2>&1; rc=$?; [ $rc -le 2 ]; check "doctor.mjs runs (exit $rc)" $([ $rc -le 2 ] && echo 0 || echo 1)
+node scripts/doctor.mjs --json 2>/dev/null | json "
+if (!d.engines || !('summary' in d)) process.exit(1);"; check "doctor.mjs --json schema" $?
+if command -v python3 >/dev/null 2>&1; then
+  python3 scripts/doctor.py --json >/dev/null 2>&1; rc=$?; [ $rc -le 2 ]; check "doctor.py runs (exit $rc)" $([ $rc -le 2 ] && echo 0 || echo 1)
+fi
+
+# --- failure cooldown (isolated cache; fake key) ---
+export XDG_CACHE_HOME="$(mktemp -d)"
+METASO_API_KEY=fake node scripts/search.mjs "test" -n 1 --json >/dev/null 2>&1
+METASO_API_KEY=fake node scripts/search.mjs "test" -n 1 --json 2>/dev/null | json "
+const m = d.engines.find(e => e.name === 'metaso');
+if (!m || m.ok !== false || !m.error.startsWith('skipped (cooldown')) process.exit(1);"
+check "cooldown skips failed engine on next run" $?
+METASO_API_KEY=fake node scripts/search.mjs "test" -n 1 --json --no-cooldown 2>/dev/null | json "
+const m = d.engines.find(e => e.name === 'metaso');
+if (!m || m.error.startsWith('skipped')) process.exit(1);"
+check "--no-cooldown bypasses cooldown" $?
+unset XDG_CACHE_HOME
 
 echo; echo "== $PASS passed, $FAIL failed =="
 exit $FAIL
