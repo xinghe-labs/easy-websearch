@@ -1,0 +1,48 @@
+{
+  "name": "easy-websearch",
+  "version": "1.5.0",
+  "description": "Zero-config multi-engine web search skill for AI agents — 16 engines, free without API keys, RRF fusion, Chinese-source optimized. Node or Python, zero deps.",
+  "license": "MIT",
+  "author": "xinghe-labs",
+  "homepage": "https://github.com/xinghe-labs/easy-websearch#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xinghe-labs/easy-websearch.git"
+  },
+  "bugs": {
+    "url": "https://github.com/xinghe-labs/easy-websearch/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "easy-websearch": "bin/cli.mjs"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "references/",
+    "SKILL.md",
+    "README.md",
+    "README.zh-CN.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "agent-skills",
+    "claude-code",
+    "web-search",
+    "multi-engine",
+    "searxng",
+    "search-engine",
+    "chinese-search",
+    "rrf",
+    "ai-agents",
+    "zero-config"
+  ],
+  "scripts": {
+    "test": "bash tests/e2e.sh",
+    "doctor": "node scripts/doctor.mjs"
+  }
+}

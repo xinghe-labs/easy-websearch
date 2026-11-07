@@ -1,0 +1,31 @@
+name: publish-npm
+
+# Publishes easy-websearch to npm when a release is published.
+# Requires a repo secret NPM_TOKEN (granular token, "Publish" permission,
+# scoped to the easy-websearch package) — Settings → Secrets → Actions.
+# Uses npm provenance: the package page will show it was built from this repo.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@101b3474143230c3562bd21f0b3c3f8254784571 # v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org/
+      - name: Publish (with provenance)
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
