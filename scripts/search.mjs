@@ -30,10 +30,10 @@ const DEFAULT_TIMEOUT = 8000;
 const RRF_K = 60;
 
 // ---------------------------------------------------------------- args ----
-const USAGE = 'Usage: node search.mjs "query" [-n 10] [--days 7] [--site d] [--exclude-site d] [--lang zh] [--engine ddg,bing] [--timeout 8] [--no-cooldown] [--json]';
+const USAGE = 'Usage: node search.mjs "query" [-n 10] [--days 7] [--site d] [--exclude-site d] [--lang zh] [--engine ddg,bing] [--timeout 8] [--no-cooldown] [--direct] [--json]';
 
 const VALUE_FLAGS = new Set(["-n", "--num", "--days", "--site", "--exclude-site", "--lang", "--engine", "--timeout"]);
-const KNOWN_FLAGS = new Set([...VALUE_FLAGS, "--json", "--no-cooldown", "--help", "-h"]);
+const KNOWN_FLAGS = new Set([...VALUE_FLAGS, "--json", "--no-cooldown", "--direct", "--help", "-h"]);
 
 function printHelp() {
   console.log(USAGE);
@@ -51,6 +51,7 @@ Options:
   --engine <a,b,c>        restrict/enable engines (comma-separated)
   --timeout <sec>         per-engine timeout (default 8)
   --no-cooldown           ignore the failure cooldown for this run
+  --direct                bypass any proxy for all engines (see README Troubleshooting)
   --json                  machine-readable output
   -h, --help              show this help
 See README.md for details. Run scripts/doctor.mjs to check engine health.`);
@@ -60,7 +61,7 @@ function parseArgs(argv) {
   const args = {
     query: "", n: 10, days: 0, site: [], excludeSite: [], lang: "",
     engines: "", timeout: DEFAULT_TIMEOUT, json: false, noCooldown: false,
-    help: false,
+    direct: false, help: false,
   };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
@@ -83,6 +84,7 @@ function parseArgs(argv) {
     else if (a === "--timeout") args.timeout = (parseInt(argv[++i], 10) || 8) * 1000;
     else if (a === "--json") args.json = true;
     else if (a === "--no-cooldown") args.noCooldown = true;
+    else if (a === "--direct") args.direct = true;
     else rest.push(a);
   }
   args.query = rest.join(" ").trim();
@@ -136,6 +138,9 @@ function proxyConnect(proxyUrl, host, port) {
   });
 }
 
+let FORCE_DIRECT = false; // set by main() from --direct / EASY_WEB_SEARCH_DIRECT
+function setForceDirect(v = true) { FORCE_DIRECT = v; }
+
 function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_TIMEOUT } = {}, depth = 0) {
   let u;
   try { u = new URL(url); } catch { return Promise.reject(new Error(`invalid URL: ${url}`)); }
@@ -159,7 +164,7 @@ function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_
         ...outgoing,
       },
     };
-    if (proxy && isHttps) {
+    if (proxy && isHttps && !FORCE_DIRECT) {
       // Socket is tunneled; request must address the target via the socket.
       proxyConnect(proxy, u.hostname, u.port || 443).then((socket) => {
         const req = mod.request(
@@ -751,6 +756,7 @@ async function main() {
     console.error(`${USAGE}\nRun with --help for details.`);
     process.exit(2);
   }
+  FORCE_DIRECT = args.direct || process.env.EASY_WEB_SEARCH_DIRECT === "1";
   const ctx = { ...args, query: buildQuery(args) };
   if (args.engines) {
     const requested = args.engines.split(",").map((s) => s.trim()).filter(Boolean);
@@ -847,4 +853,4 @@ import { pathToFileURL } from "node:url";
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) await main();
 
-export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk, cooldownPath, searxngBaseAndAuth };
+export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk, cooldownPath, searxngBaseAndAuth, setForceDirect };

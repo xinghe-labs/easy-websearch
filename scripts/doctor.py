@@ -115,12 +115,21 @@ def main() -> None:
     failed = [r for r in rows if r["status"] == "FAIL"]
     proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or \
         os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or ""
+    scrape_failed = [r for r in failed if r["engine"] in ("ddg", "bing", "baidu", "sogouweixin")]
+    proxy_hint = []
+    if proxy and len(scrape_failed) >= 2:
+        proxy_hint = [
+            f"hint: {len(scrape_failed)} scrape engines failed while a proxy is active —",
+            "      anti-bot layers block datacenter proxy exits. Bypass with:",
+            "      no_proxy=<domain>  |  EASY_WEB_SEARCH_DIRECT=1  |  doctor --direct",
+        ]
 
     if args.json:
         print(json.dumps({
             "python": sys.version.split()[0],
             "proxy": proxy or None,
             "cooldown_state_file": _cooldown_path(),
+            "hints": proxy_hint,
             "engines": rows,
             "summary": {"tested": len(tested), "failed": len(failed),
                         "skipped": len(rows) - len(tested)},
@@ -133,6 +142,8 @@ def main() -> None:
             mark = "✓" if r["status"] == "OK" else "✗" if r["status"] == "FAIL" else "–"
             print(f"  {mark} {r['engine']:<{w}} {r['status']:<5} {r['ms']:>5}ms  {r['note']}")
         print(f"\n{len(tested)} tested, {len(rows) - len(tested)} skipped, {len(failed)} failed")
+        for line in proxy_hint:
+            print(line)
 
     sys.exit(1 if failed else 0 if tested else 2)
 

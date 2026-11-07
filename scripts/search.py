@@ -82,6 +82,13 @@ def parse_json(body):
 # more browser-like to anti-bot layers.
 COOKIE_JAR = CookieJar()
 
+_FORCE_DIRECT = False
+
+
+def set_force_direct(v: bool = True) -> None:
+    global _FORCE_DIRECT
+    _FORCE_DIRECT = v
+
 
 def http_text(url: str, method: str = "GET", headers: dict | None = None,
               data: bytes | None = None, timeout: float = 8,
@@ -94,6 +101,7 @@ def http_text(url: str, method: str = "GET", headers: dict | None = None,
     # Explicit scheme allowlist: only plain http(s) URLs may reach the opener.
     if not url.lower().startswith(("http://", "https://")):
         raise RuntimeError(f"disallowed URL scheme (want http/https): {url[:80]}")
+    direct = direct or _FORCE_DIRECT or os.environ.get("EASY_WEB_SEARCH_DIRECT") == "1"
     method = method.upper()
     if method not in ("GET", "POST"):
         raise RuntimeError(f"unsupported method: {method}")
@@ -727,6 +735,8 @@ def main():
     p.add_argument("--engine", default="")
     p.add_argument("--timeout", type=int, default=8)
     p.add_argument("--no-cooldown", action="store_true")
+    p.add_argument("--direct", action="store_true",
+                   help="bypass any proxy for all engines")
     p.add_argument("--json", action="store_true")
     args = p.parse_args()
 

@@ -11,7 +11,7 @@
  * engines OK, 1 any failure, 2 nothing testable.
  */
 import { readFileSync } from "node:fs";
-import { ENGINES, availableEngines, cooldownPath } from "./search.mjs";
+import { ENGINES, availableEngines, cooldownPath, setForceDirect } from "./search.mjs";
 
 const args = process.argv.slice(2);
 const getOpt = (name, dflt) => {
@@ -20,6 +20,9 @@ const getOpt = (name, dflt) => {
 };
 const timeoutSec = parseInt(getOpt("--timeout", "8"), 10) || 8;
 const asJson = args.includes("--json");
+if (args.includes("--direct") || process.env.EASY_WEB_SEARCH_DIRECT === "1") {
+  setForceDirect(true);
+}
 const timeoutMs = timeoutSec * 1000;
 
 // --clear-cooldown: reset the failure-cooldown state and exit.
@@ -91,12 +94,20 @@ const tested = rows.filter((r) => r.status !== "SKIP");
 const failed = rows.filter((r) => r.status === "FAIL");
 const proxy = process.env.HTTPS_PROXY || process.env.https_proxy ||
   process.env.HTTP_PROXY || process.env.http_proxy || "";
+const SCRAPE = ["ddg", "bing", "baidu", "sogouweixin"];
+const scrapeFailed = failed.filter((r) => SCRAPE.includes(r.engine));
+const proxyHint = (proxy && scrapeFailed.length >= 2)
+  ? [`hint: ${scrapeFailed.length} scrape engines failed while a proxy is active —`,
+     `      anti-bot layers block datacenter proxy exits. Bypass with:`,
+     `      no_proxy=<domain>  |  EASY_WEB_SEARCH_DIRECT=1  |  doctor --direct`]
+  : [];
 
 if (asJson) {
   console.log(JSON.stringify({
     node: process.version,
     proxy: proxy || null,
     cooldownStateFile: cooldownPath(),
+    hints: proxyHint,
     engines: rows,
     summary: { tested: tested.length, failed: failed.length, skipped: rows.length - tested.length },
   }, null, 2));
@@ -108,5 +119,6 @@ if (asJson) {
     console.log(`  ${mark} ${r.engine.padEnd(w)} ${r.status.padEnd(5)} ${String(r.ms).padStart(5)}ms  ${r.note}`);
   }
   console.log(`\n${tested.length} tested, ${rows.length - tested.length} skipped, ${failed.length} failed`);
+  for (const line of proxyHint) console.log(line);
 }
 process.exit(failed.length ? 1 : tested.length ? 0 : 2);
