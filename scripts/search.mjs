@@ -485,55 +485,64 @@ function fuse(engineResults) {
 }
 
 // ---------------------------------------------------------------- main ----
-const args = parseArgs(process.argv.slice(2));
-if (!args.query) {
-  console.error('Usage: node search.mjs "query" [-n 10] [--days 7] [--site d] [--exclude-site d] [--lang zh] [--engine ddg,bing] [--json]');
-  process.exit(2);
-}
-const ctx = { ...args, query: buildQuery(args) };
-const engines = availableEngines(args.engines);
-if (engines.length === 0) {
-  console.error("No search engines available. Baseline ddg/bing need network; keyed engines need their env vars.");
-  process.exit(2);
-}
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  if (!args.query) {
+    console.error('Usage: node search.mjs "query" [-n 10] [--days 7] [--site d] [--exclude-site d] [--lang zh] [--engine ddg,bing] [--json]');
+    process.exit(2);
+  }
+  const ctx = { ...args, query: buildQuery(args) };
+  const engines = availableEngines(args.engines);
+  if (engines.length === 0) {
+    console.error("No search engines available. Baseline ddg/bing need network; keyed engines need their env vars.");
+    process.exit(2);
+  }
 
-const statuses = await Promise.all(
-  engines.map(async (name) => {
-    const t0 = Date.now();
-    try {
-      const e = ENGINES[name];
-      const results = await (typeof e === "function" ? e : e.fn)(ctx);
-      return { name, ok: true, count: results.length, ms: Date.now() - t0, results, error: "" };
-    } catch (e) {
-      return { name, ok: false, count: 0, ms: Date.now() - t0, results: [], error: e.message };
+  const statuses = await Promise.all(
+    engines.map(async (name) => {
+      const t0 = Date.now();
+      try {
+        const e = ENGINES[name];
+        const results = await (typeof e === "function" ? e : e.fn)(ctx);
+        return { name, ok: true, count: results.length, ms: Date.now() - t0, results, error: "" };
+      } catch (e) {
+        return { name, ok: false, count: 0, ms: Date.now() - t0, results: [], error: e.message };
+      }
+    })
+  );
+
+  const fused = fuse(statuses.filter((s) => s.ok)).slice(0, args.n);
+
+  if (args.json) {
+    console.log(JSON.stringify({
+      query: ctx.query,
+      engines: statuses.map(({ name, ok, count, ms, error }) => ({ name, ok, count, ms, error })),
+      results: fused.map((r, i) => ({
+        rank: i + 1, title: r.title, url: r.url, snippet: r.snippet,
+        score: +r.score.toFixed(4), engines: r.engines,
+      })),
+    }, null, 2));
+  } else {
+    const engineLine = statuses
+      .map((s) => `${s.name}: ${s.ok ? s.count + " results" : "FAILED (" + s.error + ")"} in ${s.ms}ms`)
+      .join("\n  ");
+    console.error(`engines:\n  ${engineLine}\n`);
+    if (fused.length === 0) {
+      console.error("No results from any engine.");
+      process.exit(1);
     }
-  })
-);
-
-const fused = fuse(statuses.filter((s) => s.ok)).slice(0, args.n);
-
-if (args.json) {
-  console.log(JSON.stringify({
-    query: ctx.query,
-    engines: statuses.map(({ name, ok, count, ms, error }) => ({ name, ok, count, ms, error })),
-    results: fused.map((r, i) => ({
-      rank: i + 1, title: r.title, url: r.url, snippet: r.snippet,
-      score: +r.score.toFixed(4), engines: r.engines,
-    })),
-  }, null, 2));
-} else {
-  const engineLine = statuses
-    .map((s) => `${s.name}: ${s.ok ? s.count + " results" : "FAILED (" + s.error + ")"} in ${s.ms}ms`)
-    .join("\n  ");
-  console.error(`engines:\n  ${engineLine}\n`);
-  if (fused.length === 0) {
-    console.error("No results from any engine.");
-    process.exit(1);
-  }
-  for (const [i, r] of fused.entries()) {
-    console.log(`${i + 1}. ${r.title}`);
-    console.log(`   ${r.url}`);
-    if (r.snippet) console.log(`   ${r.snippet.slice(0, 200)}`);
-    console.log(`   [${r.engines.join(", ")}]`);
+    for (const [i, r] of fused.entries()) {
+      console.log(`${i + 1}. ${r.title}`);
+      console.log(`   ${r.url}`);
+      if (r.snippet) console.log(`   ${r.snippet.slice(0, 200)}`);
+      console.log(`   [${r.engines.join(", ")}]`);
+    }
   }
 }
+
+// Run only when invoked directly (doctor.mjs imports this module).
+import { pathToFileURL } from "node:url";
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) await main();
+
+export { ENGINES, availableEngines, parseArgs, buildQuery };
