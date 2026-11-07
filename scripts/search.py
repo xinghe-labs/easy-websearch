@@ -31,7 +31,8 @@ import sys
 import time
 import urllib.error
 import urllib.parse
-from urllib.request import BaseHandler, build_opener
+from http.cookiejar import CookieJar
+from urllib.request import BaseHandler, HTTPCookieProcessor, build_opener
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
@@ -66,6 +67,12 @@ def parse_json(body):
         raise RuntimeError(f"invalid JSON response: {e}") from e
 
 
+# Shared cookie jar: search responses often set cookies that later requests
+# need (e.g. Sogou /link redirects require SNUID), and keeping them looks
+# more browser-like to anti-bot layers.
+COOKIE_JAR = CookieJar()
+
+
 def http_text(url: str, method: str = "GET", headers: dict | None = None,
               data: bytes | None = None, timeout: float = 8) -> tuple[int, str]:
     """Fetch an http(s) URL, return (status, body). Honors proxy env vars."""
@@ -89,12 +96,35 @@ def http_text(url: str, method: str = "GET", headers: dict | None = None,
     # A handler registered after the defaults overwrites that header.
     opener = build_opener()
     opener.add_handler(_HeaderInjector(merged))
+    opener.add_handler(HTTPCookieProcessor(COOKIE_JAR))
     try:
         with opener.open(safe_url, data=data if method == "POST" else None,
                          timeout=timeout) as r:
             return r.status, r.read().decode("utf-8", "ignore")
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode("utf-8", "ignore")
+
+
+def http_text_final(url: str, headers: dict | None = None,
+                    timeout: float = 8) -> tuple[int, str, str]:
+    """GET an http(s) URL and return (status, body, final_url) after redirects."""
+    if not url.lower().startswith(("http://", "https://")):
+        raise RuntimeError(f"disallowed URL scheme (want http/https): {url[:80]}")
+    safe_url: str = urllib.parse.urlunsplit(urllib.parse.urlsplit(url))
+    merged = {
+        "User-agent": UA,
+        "Accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
+        **(headers or {}),
+    }
+    opener = build_opener()
+    opener.add_handler(_HeaderInjector(merged))
+    opener.add_handler(HTTPCookieProcessor(COOKIE_JAR))
+    try:
+        with opener.open(safe_url, timeout=timeout) as r:
+            return r.status, r.read().decode("utf-8", "ignore"), r.geturl()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8", "ignore"), url
 
 
 def strip_tags(s):
@@ -152,8 +182,10 @@ def engine_ddg(ctx):
                 re.finditer(r'<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)</a>', body)]
     for i, sn in enumerate(snippets[:len(results)]):
         results[i]["snippet"] = sn
-    if not results and re.search(r"anomaly|challenge|captcha", body, re.I):
-        raise RuntimeError("blocked (anomaly page)")
+    if not results:
+        if re.search(r"anomaly|challenge|captcha", body, re.I):
+            raise RuntimeError("blocked (anomaly page)")
+        raise RuntimeError("no results parsed")
     return results
 
 
@@ -441,6 +473,118 @@ def engine_ollama(ctx):
              "snippet": (r.get("content") or "")[:400]} for r in items if r.get("url")]
 
 
+def _resolve_redirect(url: str, timeout: float) -> str:
+    """Follow a redirect chain (baidu /link etc.); return the final URL.
+
+    Baidu's /link endpoint is flaky (observed: 403 on first hit, 200 on
+    immediate retry) — require a 200 and retry once.
+    """
+    for _ in range(2):
+        try:
+            status, _, final = http_text_final(url, timeout=min(timeout, 5))
+            if status == 200 and final.startswith("http") and "baidu.com/link" not in final:
+                return final
+        except (RuntimeError, urllib.error.URLError, OSError):
+            pass  # retry / keep the original URL
+    return url
+
+
+def engine_baidu(ctx):
+    params = {"wd": ctx["query"], "rn": str(min(max(ctx["n"], 1), 20))}
+    status, body = http_text("https://www.baidu.com/s?" + urllib.parse.urlencode(params),
+                             timeout=ctx["timeout"],
+                             headers={"referer": "https://www.baidu.com/"})
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    if "百度安全验证" in body or "wappass" in body:
+        raise RuntimeError("baidu anti-bot page (security verification)")
+    results = []
+    for m in re.finditer(r'<h3[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>', body):
+        title = strip_tags(m.group(2))
+        if not title or not m.group(1).startswith("http"):
+            continue
+        results.append({"title": title, "url": html.unescape(m.group(1)), "snippet": ""})
+    if not results:
+        raise RuntimeError("no results parsed")
+    if _looks_like_junk(results, ctx["query"]):
+        raise RuntimeError("bot junk detected (results unrelated to query)")
+    # Resolve baidu /link wrappers to real targets (fusion dedup needs
+    # canonical URLs).
+    tops = results[: ctx["n"]]
+    for r in tops:
+        r["url"] = _resolve_redirect(r["url"], ctx["timeout"])
+    return tops
+
+
+def _resolve_sogou_links(urls, timeout):
+    """Sogou /link pages return a JS stub; the real target is embedded in it."""
+    resolved = []
+    for u in urls:
+        if not u.startswith("/link"):
+            resolved.append(u)
+            continue
+        try:
+            full = urllib.parse.urljoin("https://weixin.sogou.com", u)
+            _, body = http_text(full, timeout=min(timeout, 4))
+            # Stub:  url += 'https://mp.';  url += 'weixin.qq.c';  …
+            target = "".join(m.group(1) for m in
+                             re.finditer(r"url\s*\+=\s*'([^']*)'", body))
+            target = re.sub(r"@.*$", "", target)
+            if target.startswith("http"):
+                resolved.append(target)
+                continue
+            alt = re.search(r'window\.location\.replace\("([^"]+)"\)', body)
+            if alt and alt.group(1).startswith("http"):
+                resolved.append(alt.group(1))
+                continue
+        except (RuntimeError, urllib.error.URLError, OSError):
+            pass  # keep the /link URL
+        resolved.append(u)
+    return resolved
+
+
+def engine_sogou_weixin(ctx):
+    params = {"type": "2", "query": ctx["query"]}
+    status, body = http_text("https://weixin.sogou.com/weixin?" + urllib.parse.urlencode(params),
+                             timeout=ctx["timeout"],
+                             headers={"referer": "https://weixin.sogou.com/"})
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    if re.search(r"antispider|验证码|seccode", body, re.I):
+        raise RuntimeError("sogou anti-bot page (captcha) — retry later")
+    results = []
+    for m in re.finditer(r'<h3>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>', body):
+        title = strip_tags(m.group(2))
+        if not title:
+            continue
+        results.append({"title": title, "url": html.unescape(m.group(1)), "snippet": ""})
+    if not results:
+        raise RuntimeError("no results parsed")
+    urls = _resolve_sogou_links([r["url"] for r in results[: ctx["n"]]], ctx["timeout"])
+    for r, u in zip(results[: ctx["n"]], urls, strict=False):
+        r["url"] = u
+    return results[: ctx["n"]]
+
+
+def engine_searxng(ctx):
+    base = (os.environ.get("SEARXNG_BASE_URL") or "").rstrip("/")
+    params = {"q": ctx["query"], "format": "json"}
+    if ctx["lang"] == "zh":
+        params["language"] = "zh-CN"
+    elif ctx["lang"] == "en":
+        params["language"] = "en"
+    status, body = http_text(f"{base}/search?{urllib.parse.urlencode(params)}",
+                             timeout=ctx["timeout"],
+                             headers={"accept": "application/json"})
+    if status == 403:
+        raise RuntimeError("SearXNG rejected JSON — add 'json' to search.formats in settings.yml")
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    items = parse_json(body).get("results", [])[: ctx["n"]]
+    return [{"title": r.get("title") or r["url"], "url": r["url"],
+             "snippet": (r.get("content") or "")[:400]} for r in items if r.get("url")]
+
+
 # (name, engine_fn, env_key, flags): baseline engines run by default; keyed
 # engines join when their key exists; backup engines also need an explicit
 # opt-in (--engine or EASY_WEB_SEARCH_ENGINES) because anonymous quotas are low.
@@ -456,6 +600,9 @@ ENGINES = {
     "metaso": (engine_metaso, "METASO_API_KEY", frozenset()),
     "linkup": (engine_linkup, "LINKUP_API_KEY", frozenset()),
     "ollama": (engine_ollama, "OLLAMA_API_KEY", frozenset()),
+    "searxng": (engine_searxng, "SEARXNG_BASE_URL", frozenset()),
+    "baidu": (engine_baidu, None, frozenset()),
+    "sogouweixin": (engine_sogou_weixin, None, frozenset({"backup"})),
     "anysearch": (engine_anysearch, "ANYSEARCH_API_KEY", frozenset({"optional_key", "backup"})),
     "keenable": (engine_keenable, "KEENABLE_API_KEY", frozenset({"optional_key", "backup"})),
 }
@@ -547,7 +694,8 @@ def main():
     env = {k: os.environ[k] for k in
            ("BRAVE_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY", "EXA_API_KEY",
             "FIRECRAWL_API_KEY", "BOCHA_API_KEY", "METASO_API_KEY", "LINKUP_API_KEY",
-            "OLLAMA_API_KEY", "ANYSEARCH_API_KEY", "KEENABLE_API_KEY")
+            "OLLAMA_API_KEY", "ANYSEARCH_API_KEY", "KEENABLE_API_KEY",
+            "SEARXNG_BASE_URL")
            if os.environ.get(k)}
 
     ctx = {"query": build_query(args), "n": args.num, "days": args.days,

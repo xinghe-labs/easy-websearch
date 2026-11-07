@@ -89,6 +89,29 @@ function parseArgs(argv) {
   return args;
 }
 
+// ------------------------------------------------------ cookie jar ----
+// Minimal per-host cookie store: search responses often set cookies that
+// subsequent requests need (e.g. Sogou /link redirects require SNUID), and
+// keeping them also makes clients look more browser-like to anti-bot layers.
+const cookieJar = new Map(); // host -> Map(name -> value)
+
+function storeCookies(host, setCookies) {
+  if (!setCookies) return;
+  if (!cookieJar.has(host)) cookieJar.set(host, new Map());
+  const jar = cookieJar.get(host);
+  for (const sc of [].concat(setCookies)) {
+    const pair = sc.split(";")[0];
+    const eq = pair.indexOf("=");
+    if (eq > 0) jar.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
+  }
+}
+
+function cookieHeader(host) {
+  const jar = cookieJar.get(host);
+  if (!jar || !jar.size) return "";
+  return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+}
+
 // ------------------------------------------------------------- fetch ----
 // Node's fetch() ignores HTTP(S)_PROXY; many users (esp. behind the GFW)
 // need it. Implement a minimal CONNECT tunnel ourselves. Zero-dep.
@@ -124,13 +147,16 @@ function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("timeout")), timeout);
     const finish = (fn, val) => { clearTimeout(timer); fn(val); };
+    const outgoing = { ...headers };
+    const jarCookie = cookieHeader(u.hostname);
+    if (jarCookie && !outgoing.cookie) outgoing.cookie = jarCookie;
     const opts = {
       method,
       headers: {
         "user-agent": UA,
         "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
         "accept": "text/html,application/json;q=0.9,*/*;q=0.8",
-        ...headers,
+        ...outgoing,
       },
     };
     if (proxy && isHttps) {
@@ -152,6 +178,7 @@ function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_
       req.end();
     }
     function handler(res) {
+      storeCookies(u.hostname, res.headers["set-cookie"]);
       // Follow up to 3 redirects — Bing (and others) 302-redirect on direct
       // (non-proxied) connections, e.g. to regional hosts.
       if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && depth < 3) {
@@ -165,7 +192,7 @@ function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_
       }
       const chunks = [];
       res.on("data", (c) => chunks.push(c));
-      res.on("end", () => finish(resolve, { status: res.statusCode, body: Buffer.concat(chunks).toString("utf8") }));
+      res.on("end", () => finish(resolve, { status: res.statusCode, body: Buffer.concat(chunks).toString("utf8"), finalUrl: url }));
     }
   });
 }
@@ -196,7 +223,9 @@ function normalizeUrl(u) {
   try {
     const x = new URL(u);
     x.hash = "";
-    [...x.searchParams.keys()].filter((k) => /^(utm_|ref|fbclid)/i.test(k)).forEach((k) => x.searchParams.delete(k));
+    for (const k of [...x.searchParams.keys()]) {
+      if (/^(utm_|ref|fbclid)/i.test(k)) x.searchParams.delete(k);
+    }
     let s = x.toString();
     if (s.endsWith("/")) s = s.slice(0, -1);
     return s;
@@ -229,8 +258,8 @@ async function engineDDG(ctx) {
   const results = [];
   // Anchors: <a rel="nofollow" class="result__a" href="...">Title</a>, snippets follow.
   const re = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
-  let m;
-  while ((m = re.exec(body)) && results.length < ctx.n * 2) {
+  for (const m of body.matchAll(re)) {
+    if (results.length >= ctx.n * 2) break;
     let href = decodeEntities(m[1]);
     const ud = href.match(/[?&]uddg=([^&]+)/);
     if (ud) href = decodeURIComponent(ud[1]);
@@ -240,9 +269,13 @@ async function engineDDG(ctx) {
   }
   // Snippets appear after each anchor in document order.
   const snRe = /<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/g;
-  let i = 0, s;
-  while ((s = snRe.exec(body)) && i < results.length) results[i++].snippet = stripTags(s[1]);
+  let i = 0;
+  for (const s of body.matchAll(snRe)) {
+    if (i >= results.length) break;
+    results[i++].snippet = stripTags(s[1]);
+  }
   if (results.length === 0 && /anomaly|challenge|captcha/i.test(body)) throw new Error("blocked (anomaly page)");
+  if (results.length === 0) throw new Error("no results parsed");
   return results;
 }
 
@@ -283,8 +316,8 @@ async function engineBing(ctx) {
   if (status !== 200) throw new Error(`HTTP ${status}`);
   const results = [];
   const liRe = /<li class="b_algo"[\s\S]*?<h2>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>\s*<\/h2>([\s\S]*?)<\/li>/g;
-  let m;
-  while ((m = liRe.exec(body)) && results.length < ctx.n * 2) {
+  for (const m of body.matchAll(liRe)) {
+    if (results.length >= ctx.n * 2) break;
     let url = decodeEntities(m[1]);
     // Bing wraps targets in /ck/a click-tracking redirects; the real URL is
     // base64 (sometimes "a1"-prefixed) inside the u= param. Decode when present.
@@ -496,9 +529,120 @@ async function engineOllama(ctx) {
     .map((r) => ({ title: r.title || r.url, url: r.url, snippet: (r.content || "").slice(0, 400) }));
 }
 
+// Follow a redirect chain (baidu /link etc.) and return the final URL.
+// Baidu's /link is flaky (403 on first hit, 200 on retry) — require 200,
+// retry once.
+async function resolveRedirect(url, timeout) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await fetchText(url, { timeout: Math.min(timeout, 5000) });
+      if (r.status === 200 && r.finalUrl && /^https?:\/\//.test(r.finalUrl) &&
+          !/baidu\.com\/link/.test(r.finalUrl)) {
+        return r.finalUrl;
+      }
+    } catch { /* retry / keep the original URL */ }
+  }
+  return url;
+}
+
+async function engineBaidu(ctx) {
+  const params = new URLSearchParams({ wd: ctx.query, rn: String(Math.min(Math.max(ctx.n, 1), 20)) });
+  const { status, body } = await fetchText("https://www.baidu.com/s?" + params.toString(), {
+    timeout: ctx.timeout,
+    headers: { referer: "https://www.baidu.com/" },
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  if (body.includes("百度安全验证") || body.includes("wappass")) {
+    throw new Error("baidu anti-bot page (security verification)");
+  }
+  const results = [];
+  const re = /<h3[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+  for (const m of body.matchAll(re)) {
+    if (results.length >= ctx.n * 2) break;
+    const title = stripTags(m[2]);
+    if (!title || !/^https?:\/\//.test(m[1])) continue;
+    results.push({ title, url: decodeEntities(m[1]), snippet: "" });
+  }
+  if (results.length === 0) throw new Error("no results parsed");
+  if (looksLikeJunk(results, ctx.query)) {
+    throw new Error("bot junk detected (results unrelated to query)");
+  }
+  // Resolve baidu /link redirect wrappers to real targets (fusion dedup
+  // needs canonical URLs).
+  const tops = results.slice(0, ctx.n);
+  const resolved = await Promise.all(tops.map((r) => resolveRedirect(r.url, ctx.timeout)));
+  tops.forEach((r, i) => { r.url = resolved[i]; });
+  return tops;
+}
+
+// Sogou WeChat /link redirects return a JS stub; the real target is embedded
+// in it. Resolve up to a few links in parallel; failures keep the /link URL.
+async function resolveSogouLinks(urls, timeout) {
+  return Promise.all(urls.map(async (u) => {
+    if (!u.startsWith("/link")) return u;
+    try {
+      const full = new URL(u, "https://weixin.sogou.com").toString();
+      const { body } = await fetchText(full, { timeout: Math.min(timeout, 4000) });
+      // Stub looks like:  url += 'https://mp.';  url += 'weixin.qq.c';  …
+      // Capture group excludes the quotes; concat the pieces directly.
+      let target = "";
+      for (const m of body.matchAll(/url\s*\+=\s*'([^']*)'/g)) target += m[1];
+      target = target.replace(/@.*$/, "");
+      if (/^https?:\/\//.test(target)) return target;
+      const alt = body.match(/window\.location\.replace\("([^"]+)"\)/);
+      if (alt && /^https?:\/\//.test(alt[1])) return alt[1];
+    } catch { /* keep the /link URL */ }
+    return u;
+  }));
+}
+
+async function engineSogouWeixin(ctx) {
+  const params = new URLSearchParams({ type: "2", query: ctx.query });
+  const { status, body } = await fetchText("https://weixin.sogou.com/weixin?" + params.toString(), {
+    timeout: ctx.timeout,
+    headers: { referer: "https://weixin.sogou.com/" },
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  if (/antispider|验证码|seccode/i.test(body)) {
+    throw new Error("sogou anti-bot page (captcha) — retry later");
+  }
+  const results = [];
+  const re = /<h3>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+  for (const m of body.matchAll(re)) {
+    if (results.length >= ctx.n * 2) break;
+    const title = stripTags(m[2]);
+    if (!title) continue;
+    results.push({ title, url: decodeEntities(m[1]), snippet: "" });
+  }
+  if (results.length === 0) throw new Error("no results parsed");
+  const urls = await resolveSogouLinks(results.slice(0, ctx.n).map((r) => r.url), ctx.timeout);
+  results.slice(0, ctx.n).forEach((r, i) => { r.url = urls[i]; });
+  return results.slice(0, ctx.n);
+}
+
+async function engineSearxng(ctx) {
+  const base = (process.env.SEARXNG_BASE_URL || "").replace(/\/$/, "");
+  const params = new URLSearchParams({ q: ctx.query, format: "json" });
+  if (ctx.lang === "zh") params.set("language", "zh-CN");
+  else if (ctx.lang === "en") params.set("language", "en");
+  const { status, body } = await fetchText(`${base}/search?${params.toString()}`, {
+    timeout: ctx.timeout,
+    headers: { accept: "application/json" },
+  });
+  if (status === 403) {
+    throw new Error("SearXNG rejected JSON — add 'json' to search.formats in settings.yml");
+  }
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const items = parseJson(body)?.results || [];
+  return items.slice(0, ctx.n)
+    .filter((r) => r.url)
+    .map((r) => ({ title: r.title || r.url, url: r.url, snippet: (r.content || "").slice(0, 400) }));
+}
+
 const ENGINES = {
   ddg: engineDDG,
   bing: engineBing,
+  baidu: engineBaidu,
   brave: { fn: engineBrave, key: "BRAVE_API_KEY" },
   tavily: { fn: engineTavily, key: "TAVILY_API_KEY" },
   serper: { fn: engineSerper, key: "SERPER_API_KEY" },
@@ -508,10 +652,13 @@ const ENGINES = {
   metaso: { fn: engineMetaso, key: "METASO_API_KEY" },
   linkup: { fn: engineLinkup, key: "LINKUP_API_KEY" },
   ollama: { fn: engineOllama, key: "OLLAMA_API_KEY" },
+  searxng: { fn: engineSearxng, key: "SEARXNG_BASE_URL" },
   // Keyless backup engines: anonymous quotas are low, so they stay OFF by
   // default. Opt in via --engine or the EASY_WEB_SEARCH_ENGINES env var.
   anysearch: { fn: engineAnysearch, key: "ANYSEARCH_API_KEY", optionalKey: true, backup: true },
   keenable: { fn: engineKeenable, key: "KEENABLE_API_KEY", optionalKey: true, backup: true },
+  // Keyless vertical engine (WeChat articles only) — opt-in like backups.
+  sogouweixin: { fn: engineSogouWeixin, key: null, backup: true },
 };
 
 const BACKUP_ENGINES_ENV = "EASY_WEB_SEARCH_ENGINES";
