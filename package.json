@@ -1,6 +1,6 @@
 {
   "name": "easy-websearch",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "Zero-config multi-engine web search skill for AI agents — 16 engines, free without API keys, RRF fusion, Chinese-source optimized. Node or Python, zero deps.",
   "license": "MIT",
   "author": "xinghe-labs",
