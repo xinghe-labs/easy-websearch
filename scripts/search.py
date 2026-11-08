@@ -198,7 +198,7 @@ def build_query(args):
 
 
 # --------------------------------------------------------------- engines ----
-def engine_ddg(ctx):
+def _ddg_params(ctx):
     params = {"q": ctx["query"], "nost": "1"}
     if ctx["lang"] == "zh":
         params["kl"] = "cn-zh"
@@ -206,22 +206,26 @@ def engine_ddg(ctx):
         params["kl"] = "us-en"
     if ctx["days"] > 0:
         params["df"] = "d" if ctx["days"] <= 1 else ("w" if ctx["days"] <= 7 else "m")
-    data = urllib.parse.urlencode(params).encode()
-    status, body = http_text("https://html.duckduckgo.com/html/", method="POST",
-                             data=data, headers={"content-type": "application/x-www-form-urlencoded"},
-                             timeout=ctx["timeout"])
-    if status != 200:
-        raise RuntimeError(f"HTTP {status}")
+    return params
+
+
+def _ddg_push_result(results, href, raw_title):
+    """Shared target extraction: html/lite UIs wrap results in /l/?uddg=<enc>."""
+    ud = re.search(r"[?&]uddg=([^&]+)", href)
+    if ud:
+        href = urllib.parse.unquote(ud.group(1))
+    title = strip_tags(raw_title)
+    if not title or not href.startswith("http"):
+        return  # anomaly/challenge page guard
+    results.append({"title": title, "url": href, "snippet": ""})
+
+
+def _parse_ddg_html(ctx, body):
     results = []
     for m in re.finditer(r'<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>', body):
-        href = html.unescape(m.group(1))
-        ud = re.search(r"[?&]uddg=([^&]+)", href)
-        if ud:
-            href = urllib.parse.unquote(ud.group(1))
-        title = strip_tags(m.group(2))
-        if not title or not href.startswith("http"):
-            continue  # anomaly/challenge page guard
-        results.append({"title": title, "url": href, "snippet": ""})
+        if len(results) >= ctx["n"] * 2:
+            break
+        _ddg_push_result(results, html.unescape(m.group(1)), m.group(2))
     snippets = [strip_tags(s.group(1)) for s in
                 re.finditer(r'<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)</a>', body)]
     for i, sn in enumerate(snippets[:len(results)]):
@@ -231,6 +235,58 @@ def engine_ddg(ctx):
             raise RuntimeError("blocked (anomaly page)")
         raise RuntimeError("no results parsed")
     return results
+
+
+def _parse_ddg_lite(ctx, body):
+    """lite UI is table-based; attributes use single quotes and href
+    precedes the class: <a href="..." class='result-link'>Title</a> with
+    <td class='result-snippet'> cells after each anchor."""
+    results = []
+    for m in re.finditer(r'<a\b([^>]*result-link[^>]*)>([\s\S]*?)</a>', body):
+        if len(results) >= ctx["n"] * 2:
+            break
+        href_m = re.search(r'href="([^"]+)"', m.group(1)) or re.search(r"href='([^']+)'", m.group(1))
+        _ddg_push_result(results, html.unescape(href_m.group(1) if href_m else ""), m.group(2))
+    snippets = [strip_tags(s.group(1)) for s in
+                re.finditer(r'<td\b[^>]*result-snippet[^>]*>([\s\S]*?)</td>', body)]
+    for i, sn in enumerate(snippets[:len(results)]):
+        results[i]["snippet"] = sn
+    if not results:
+        if re.search(r"anomaly|challenge|captcha", body, re.I):
+            raise RuntimeError("blocked (anomaly page)")
+        raise RuntimeError("no results parsed")
+    return results
+
+
+# Blocks are per-host: html.duckduckgo.com → duckduckgo.com/html → lite
+# (a separate table UI). Rotate before failing (and arming a cooldown).
+_DD_ENDPOINTS = (
+    ("https://html.duckduckgo.com/html/", _parse_ddg_html, "POST"),
+    ("https://duckduckgo.com/html/", _parse_ddg_html, "POST"),
+    ("https://lite.duckduckgo.com/lite/?", _parse_ddg_lite, "GET"),
+)
+
+
+def engine_ddg(ctx):
+    qs = urllib.parse.urlencode(_ddg_params(ctx))
+    last_err = None
+    for url, parse, method in _DD_ENDPOINTS:
+        try:
+            if method == "POST":
+                status, body = http_text(url, method="POST", data=qs.encode(),
+                                         headers={"content-type": "application/x-www-form-urlencoded"},
+                                         timeout=ctx["timeout"])
+            else:
+                # lite serves a GET form; the html UIs take a POST form.
+                status, body = http_text(url + qs, timeout=ctx["timeout"])
+            if status != 200:
+                raise RuntimeError(f"HTTP {status}")
+            return parse(ctx, body)
+        except (RuntimeError, urllib.error.URLError, OSError) as e:
+            last_err = e
+    if last_err is None:  # unreachable — the loop always runs ≥ 1 endpoint
+        raise RuntimeError("no ddg endpoint attempted")
+    raise last_err
 
 
 def _decode_bing_target(url):
@@ -285,18 +341,13 @@ def _looks_like_junk(results, query):
     return False
 
 
-def engine_bing(ctx):
-    params = {"q": ctx["query"]}
-    if ctx["lang"] == "zh":
-        params.update({"mkt": "zh-CN", "setlang": "zh"})
-    elif ctx["lang"] == "en":
-        params.update({"mkt": "en-US", "setlang": "en"})
-    status, body = http_text("https://www.bing.com/search?" + urllib.parse.urlencode(params),
-                             timeout=ctx["timeout"],
-                             headers={"referer": "https://www.bing.com/",
-                                      "upgrade-insecure-requests": "1"})
-    if status != 200:
-        raise RuntimeError(f"HTTP {status}")
+# Bing serves the same b_algo SERP markup from regional hosts. Blocks and
+# bot-junk pages are per-host, so rotate before failing (and arming a
+# cooldown): www → cn (CN-tuned, looser for CN queries) → global.
+_BING_HOSTS = ("https://www.bing.com", "https://cn.bing.com", "https://global.bing.com")
+
+
+def _parse_bing_results(ctx, body):
     results = []
     for m in re.finditer(r'<li class="b_algo"[\s\S]*?<h2>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>\s*</h2>([\s\S]*?)</li>', body):
         url = html.unescape(m.group(1))
@@ -308,9 +359,63 @@ def engine_bing(ctx):
         results.append({"title": title, "url": url, "snippet": snip})
     if not results:
         raise RuntimeError("no results parsed")
-    if _looks_like_junk(results, ctx["query"]):
-        raise RuntimeError("bot junk detected (results unrelated to query)")
     return results
+
+
+def engine_bing(ctx):
+    params = {"q": ctx["query"]}
+    if ctx["lang"] == "zh":
+        params.update({"mkt": "zh-CN", "setlang": "zh"})
+    elif ctx["lang"] == "en":
+        params.update({"mkt": "en-US", "setlang": "en"})
+    qs = urllib.parse.urlencode(params)
+    last_err = None
+    for host in _BING_HOSTS:
+        try:
+            status, body = http_text(f"{host}/search?{qs}",
+                                     timeout=ctx["timeout"],
+                                     headers={"referer": f"{host}/",
+                                              "upgrade-insecure-requests": "1"})
+            if status != 200:
+                raise RuntimeError(f"HTTP {status}")
+            results = _parse_bing_results(ctx, body)
+            if _looks_like_junk(results, ctx["query"]):
+                raise RuntimeError("bot junk detected (results unrelated to query)")
+            return results
+        except (RuntimeError, urllib.error.URLError, OSError) as e:
+            last_err = e
+    # All HTML hosts failed — try the RSS pipeline as the last variant.
+    # format=rss serves structured XML from a different content pipeline:
+    # HTML bot-junk pages don't affect it, and it tolerates bots best.
+    try:
+        status, body = http_text(f"https://www.bing.com/search?{qs}&format=rss",
+                                  timeout=ctx["timeout"],
+                                  headers={"referer": "https://www.bing.com/",
+                                           "upgrade-insecure-requests": "1"})
+        if status != 200:
+            raise RuntimeError(f"HTTP {status}")
+        results = []
+        for m in re.finditer(r"<item>([\s\S]*?)</item>", body):
+            if len(results) >= ctx["n"] * 2:
+                break
+            item = re.sub(r"<!\[CDATA\[([\s\S]*?)\]\]>", r"\1", m.group(1))
+            tm = re.search(r"<title>([\s\S]*?)</title>", item)
+            lm = re.search(r"<link>([\s\S]*?)</link>", item)
+            dm = re.search(r"<description>([\s\S]*?)</description>", item)
+            title = strip_tags(tm.group(1) if tm else "")
+            link = html.unescape(lm.group(1)) if lm else ""
+            desc = html.unescape(dm.group(1)) if dm else ""
+            if not link.startswith("http") or not title:
+                continue
+            results.append({"title": title, "url": link, "snippet": desc[:400]})
+        if not results:
+            raise RuntimeError("no results parsed")
+        return results
+    except (RuntimeError, urllib.error.URLError, OSError) as e:
+        last_err = e
+    if last_err is None:  # unreachable — the loop always runs ≥ 1 host
+        raise RuntimeError("no bing host attempted")
+    raise last_err
 
 
 def engine_brave(ctx):
@@ -533,15 +638,19 @@ def _resolve_redirect(url: str, timeout: float) -> str:
     return url
 
 
-def engine_baidu(ctx):
-    params = {"wd": ctx["query"], "rn": str(min(max(ctx["n"], 1), 20))}
-    status, body = retry_http_text("https://www.baidu.com/s?" + urllib.parse.urlencode(params),
-                             timeout=ctx["timeout"], direct=True,
-                             headers={"referer": "https://www.baidu.com/"})
-    if status != 200:
-        raise RuntimeError(f"HTTP {status}")
-    if "百度安全验证" in body or "wappass" in body:
-        raise RuntimeError("baidu anti-bot page (security verification)")
+# Baidu WAF state is per-host. Desktop www first; the mobile SERP
+# (m.baidu.com, `word` param) sits behind a looser WAF and serves as the
+# fallback. The <h3><a> markup is shared by both UIs.
+def _baidu_variants(query: str, rn: str):
+    return [
+        (f"https://www.baidu.com/s?wd={urllib.parse.quote(query)}&rn={rn}",
+         "https://www.baidu.com/"),
+        (f"https://m.baidu.com/s?word={urllib.parse.quote(query)}&rn={rn}",
+         "https://www.baidu.com/"),
+    ]
+
+
+def _parse_baidu_results(ctx, body):
     results = []
     for m in re.finditer(r'<h3[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>', body):
         title = strip_tags(m.group(2))
@@ -550,14 +659,34 @@ def engine_baidu(ctx):
         results.append({"title": title, "url": html.unescape(m.group(1)), "snippet": ""})
     if not results:
         raise RuntimeError("no results parsed")
-    if _looks_like_junk(results, ctx["query"]):
-        raise RuntimeError("bot junk detected (results unrelated to query)")
-    # Resolve baidu /link wrappers to real targets (fusion dedup needs
-    # canonical URLs).
-    tops = results[: ctx["n"]]
-    for r in tops:
-        r["url"] = _resolve_redirect(r["url"], ctx["timeout"])
-    return tops
+    return results
+
+
+def engine_baidu(ctx):
+    rn = str(min(max(ctx["n"], 1), 20))
+    last_err = None
+    for url, referer in _baidu_variants(ctx["query"], rn):
+        try:
+            status, body = retry_http_text(url, timeout=ctx["timeout"], direct=True,
+                                           headers={"referer": referer})
+            if status != 200:
+                raise RuntimeError(f"HTTP {status}")
+            if "百度安全验证" in body or "wappass" in body:
+                raise RuntimeError("baidu anti-bot page (security verification)")
+            results = _parse_baidu_results(ctx, body)
+            if _looks_like_junk(results, ctx["query"]):
+                raise RuntimeError("bot junk detected (results unrelated to query)")
+            # Resolve baidu /link wrappers to real targets (fusion dedup needs
+            # canonical URLs).
+            tops = results[: ctx["n"]]
+            for r in tops:
+                r["url"] = _resolve_redirect(r["url"], ctx["timeout"])
+            return tops
+        except (RuntimeError, urllib.error.URLError, OSError) as e:
+            last_err = e
+    if last_err is None:  # unreachable — the loop always runs ≥ 1 variant
+        raise RuntimeError("no baidu variant attempted")
+    raise last_err
 
 
 def _resolve_sogou_links(urls, timeout, base="https://weixin.sogou.com"):
@@ -638,15 +767,10 @@ def engine_sogou_web(ctx):
     return tops
 
 
-def engine_so360(ctx):
-    params = {"q": ctx["query"]}
-    status, body = retry_http_text("https://www.so.com/s?" + urllib.parse.urlencode(params),
-                             timeout=ctx["timeout"], direct=True,
-                             headers={"referer": "https://www.so.com/"})
-    if status != 200:
-        raise RuntimeError(f"HTTP {status}")
-    if re.search(r"验证码|wappass", body, re.I):
-        raise RuntimeError("so360 anti-bot page (captcha) — retry later")
+# WAF state is per-host: desktop www first, then the mobile SERP behind a
+# looser mobile gate (same res-title titles, but links are jump?u=<enc>
+# wrappers on anchors preceding each title, not /link redirects).
+def _parse_so360_desktop(ctx, body):
     results = []
     for m in re.finditer(r'<h3[^>]*class="res-title[^"]*"[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>', body):
         title = strip_tags(m.group(2))
@@ -658,10 +782,63 @@ def engine_so360(ctx):
                         "snippet": strip_tags(desc.group(1))[:300] if desc else ""})
     if not results:
         raise RuntimeError("no results parsed")
-    tops = results[: ctx["n"]]
-    for r, u in zip(tops, _resolve_so360_links([r["url"] for r in tops], ctx["timeout"]), strict=False):
-        r["url"] = u
-    return tops
+    return results
+
+
+def _parse_so360_mobile(ctx, body):
+    results = []
+    for m in re.finditer(r'<h3 class="res-title">([\s\S]*?)</h3>', body):
+        if len(results) >= ctx["n"] * 2:
+            break
+        title = strip_tags(m.group(1))
+        if not title:
+            continue
+        # Result URL: the closest jump?u=<enc> wrapper before the title (layout
+        # varies by card type; the anchor always precedes the <h3>).
+        before = body[max(0, m.start() - 800):m.start()]
+        links = re.findall(r'jump\?u=([^"\'&\s]+)', before)
+        if not links:
+            continue
+        url = urllib.parse.unquote(links[-1])
+        if not url.startswith("http"):
+            continue
+        after = body[m.end():m.end() + 600]
+        sm = re.search(r'<p class="g-main summary">([\s\S]*?)</p>', after)
+        results.append({"title": title, "url": url,
+                        "snippet": strip_tags(sm.group(1))[:300] if sm else ""})
+    if not results:
+        raise RuntimeError("no results parsed")
+    return results
+
+
+_SO360_VARIANTS = (
+    (lambda q: f"https://www.so.com/s?q={urllib.parse.quote(q)}", "https://www.so.com/",
+     _parse_so360_desktop),
+    (lambda q: f"https://m.so.com/s?q={urllib.parse.quote(q)}", "https://m.so.com/",
+     _parse_so360_mobile),
+)
+
+
+def engine_so360(ctx):
+    last_err = None
+    for url_fn, referer, parse in _SO360_VARIANTS:
+        try:
+            status, body = retry_http_text(url_fn(ctx["query"]), timeout=ctx["timeout"],
+                                           direct=True, headers={"referer": referer})
+            if status != 200:
+                raise RuntimeError(f"HTTP {status}")
+            if re.search(r"验证码|wappass", body, re.I):
+                raise RuntimeError("so360 anti-bot page (captcha) — retry later")
+            results = parse(ctx, body)
+            tops = results[: ctx["n"]]
+            for r, u in zip(tops, _resolve_so360_links([r["url"] for r in tops], ctx["timeout"]), strict=False):
+                r["url"] = u
+            return tops
+        except (RuntimeError, urllib.error.URLError, OSError) as e:
+            last_err = e
+    if last_err is None:  # unreachable — the loop always runs ≥ 1 variant
+        raise RuntimeError("no so360 variant attempted")
+    raise last_err
 
 
 def engine_sogou_weixin(ctx):

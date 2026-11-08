@@ -101,6 +101,28 @@ absorbs. Also: these engines + searxng now bypass user proxies entirely
 (`direct=True`), since datacenter proxy exits get blocked by CN anti-bot
 layers immediately.
 
+### Endpoint-variant rotation (v1.8 addendum)
+
+Anti-bot blocks are per-host, so ddg/bing/baidu now rotate endpoint variants
+before failing (and arming a cooldown). First success wins; the last error
+is rethrown when all variants fail:
+
+| Engine | Variants (in order) | Notes |
+|---|---|---|
+| ddg | `html.duckduckgo.com/html/` (POST) → `duckduckgo.com/html/` (POST) → `lite.duckduckgo.com/lite/` (GET) | lite is a separate table UI: `href="…" class='result-link'` anchors (single quotes, href precedes class) + `result-snippet` `<td>`s. Same `/l/?uddg=` redirect decode. |
+| bing | `www.bing.com` → `cn.bing.com` → `global.bing.com` → `www.bing.com/search?…&format=rss` | Same `b_algo` markup on all regional hosts; junk pages are host-local, so junk on www rotates to cn. RSS is the last resort: structured XML from a different content pipeline — HTML bot-junk doesn't affect it (verified: 10 items/query, direct `<link>` URLs, no /ck/a wrappers). |
+| baidu | `www.baidu.com/s?wd=` → `m.baidu.com/s?word=` | Mobile SERP uses `word` (not `wd`); both keep `direct=True`. Mobile WAF is reportedly looser on other fingerprints — on the v1.8 probe host it also serves the verification page, so the fallback is best-effort. |
+| so360 | `www.so.com/s` → `m.so.com/s` | Desktop: `h3.res-title > a` + `res-desc`, `/link?m=` wrappers. Mobile: different card layout — URL is the closest preceding `m.so.com/jump?u=<enc>` wrapper (decode directly, no /link resolver needed), snippet in `p.g-main.summary`. WAF fingerprint asymmetry is inverted vs baidu: python-urllib passed mobile while node got captcha'd on the same day. |
+
+Trade-off: a fully-blocked engine now burns up to 3-4 fetches before the
+cooldown arms (engines run in parallel, so wall-clock impact is bounded).
+Verified 2026-11-08: all variants return real SERPs from the probe host
+(lite validated online after DDG anomaly cooldown; bing RSS and so360
+mobile validated live — so360 mobile via the python runtime); rotation
+paths are shared-shape loops exercised via live runs. Boundary: ddg's three
+endpoints share one backend rate limiter — rotation defeats per-host
+blocks, not IP-level ones.
+
 ### Wikipedia reachability boundary (v1.7 addendum)
 
 en/zh.wikipedia.org reachability varies by environment: blocked from CN

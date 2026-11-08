@@ -280,29 +280,33 @@ function buildQuery(args) {
 // Each engine: async (ctx) => [{title, url, snippet}]. Throw on failure —
 // the runner catches and records per-engine status.
 
-async function engineDDG(ctx) {
+// DDG serves the same HTML UI from several hosts. Anti-bot blocks are
+// per-host, so rotate endpoints before failing (and arming a cooldown):
+// html.duckduckgo.com → duckduckgo.com/html → lite (a separate table UI).
+function ddgParams(ctx) {
   const params = new URLSearchParams({ q: ctx.query, nost: "1" });
   if (ctx.lang === "zh") params.set("kl", "cn-zh");
   else if (ctx.lang === "en") params.set("kl", "us-en");
   if (ctx.days > 0) params.set("df", ctx.days <= 1 ? "d" : ctx.days <= 7 ? "w" : "m");
-  const { status, body } = await fetchText("https://html.duckduckgo.com/html/", {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: params.toString(),
-    timeout: ctx.timeout,
-  });
-  if (status !== 200) throw new Error(`HTTP ${status}`);
+  return params;
+}
+
+// Shared target extraction: html/lite UIs wrap results in /l/?uddg=<enc>.
+function ddgPushResult(results, href, rawTitle) {
+  const ud = href.match(/[?&]uddg=([^&]+)/);
+  if (ud) href = decodeURIComponent(ud[1]);
+  const title = stripTags(rawTitle);
+  if (!title || !/^https?:\/\//.test(href)) return; // anomaly/challenge page guard
+  results.push({ title, url: href, snippet: "" });
+}
+
+function parseDdgHtml(ctx, body) {
   const results = [];
   // Anchors: <a rel="nofollow" class="result__a" href="...">Title</a>, snippets follow.
   const re = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
   for (const m of body.matchAll(re)) {
     if (results.length >= ctx.n * 2) break;
-    let href = decodeEntities(m[1]);
-    const ud = href.match(/[?&]uddg=([^&]+)/);
-    if (ud) href = decodeURIComponent(ud[1]);
-    const title = stripTags(m[2]);
-    if (!title || !/^https?:\/\//.test(href)) continue; // anomaly/challenge page guard
-    results.push({ title, url: href, snippet: "" });
+    ddgPushResult(results, decodeEntities(m[1]), m[2]);
   }
   // Snippets appear after each anchor in document order.
   const snRe = /<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/g;
@@ -314,6 +318,57 @@ async function engineDDG(ctx) {
   if (results.length === 0 && /anomaly|challenge|captcha/i.test(body)) throw new Error("blocked (anomaly page)");
   if (results.length === 0) throw new Error("no results parsed");
   return results;
+}
+
+function parseDdgLite(ctx, body) {
+  const results = [];
+  // lite UI is table-based; attributes use single quotes and href precedes
+  // the class: <a rel="nofollow" href="..." class='result-link'>Title</a>.
+  const re = /<a\b([^>]*result-link[^>]*)>([\s\S]*?)<\/a>/g;
+  for (const m of body.matchAll(re)) {
+    if (results.length >= ctx.n * 2) break;
+    const href = (m[1].match(/href="([^"]+)"/) || m[1].match(/href='([^']+)'/) || [])[1] || "";
+    ddgPushResult(results, decodeEntities(href), m[2]);
+  }
+  const snRe = /<td\b[^>]*result-snippet[^>]*>([\s\S]*?)<\/td>/g;
+  let i = 0;
+  for (const s of body.matchAll(snRe)) {
+    if (i >= results.length) break;
+    results[i++].snippet = stripTags(s[1]);
+  }
+  if (results.length === 0 && /anomaly|challenge|captcha/i.test(body)) throw new Error("blocked (anomaly page)");
+  if (results.length === 0) throw new Error("no results parsed");
+  return results;
+}
+
+const DDG_ENDPOINTS = [
+  { url: "https://html.duckduckgo.com/html/", parse: parseDdgHtml },
+  { url: "https://duckduckgo.com/html/", parse: parseDdgHtml },
+  { url: "https://lite.duckduckgo.com/lite/?", parse: parseDdgLite },
+];
+
+async function engineDDG(ctx) {
+  const params = ddgParams(ctx);
+  let lastErr;
+  for (const ep of DDG_ENDPOINTS) {
+    try {
+      let status, body;
+      if (ep.parse === parseDdgLite) {
+        // lite serves a GET form; the html UIs take a POST form.
+        ({ status, body } = await fetchText(ep.url + params.toString(), { timeout: ctx.timeout }));
+      } else {
+        ({ status, body } = await fetchText(ep.url, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: params.toString(),
+          timeout: ctx.timeout,
+        }));
+      }
+      if (status !== 200) throw new Error(`HTTP ${status}`);
+      return ep.parse(ctx, body);
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr;
 }
 
 // Bing bot-junk guard: under automation pressure Bing serves HTTP 200 pages
@@ -342,15 +397,13 @@ function looksLikeJunk(results, query) {
   return false;
 }
 
-async function engineBing(ctx) {
-  const params = new URLSearchParams({ q: ctx.query });
-  if (ctx.lang === "zh") { params.set("mkt", "zh-CN"); params.set("setlang", "zh"); }
-  else if (ctx.lang === "en") { params.set("mkt", "en-US"); params.set("setlang", "en"); }
-  const { status, body } = await retryFetch(`https://www.bing.com/search?${params}`, {
-    timeout: ctx.timeout,
-    headers: { referer: "https://www.bing.com/", "upgrade-insecure-requests": "1" },
-  });
-  if (status !== 200) throw new Error(`HTTP ${status}`);
+// Bing serves the same b_algo SERP markup from regional hosts. Blocks and
+// bot-junk pages are per-host, so rotate before failing (and arming a
+// cooldown): www → cn (CN-tuned, looser for CN queries) → global; an
+// all-HTML failure falls through to the RSS pipeline (format=rss).
+const BING_HOSTS = ["https://www.bing.com", "https://cn.bing.com", "https://global.bing.com"];
+
+function parseBingResults(ctx, body) {
   const results = [];
   const liRe = /<li class="b_algo"[\s\S]*?<h2>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>\s*<\/h2>([\s\S]*?)<\/li>/g;
   for (const m of body.matchAll(liRe)) {
@@ -371,9 +424,55 @@ async function engineBing(ctx) {
     results.push({ title, url, snippet: snip });
   }
   if (results.length === 0) throw new Error("no results parsed");
-  if (looksLikeJunk(results, ctx.query)) {
-    throw new Error("bot junk detected (results unrelated to query)");
+  return results;
+}
+
+async function engineBing(ctx) {
+  const params = new URLSearchParams({ q: ctx.query });
+  if (ctx.lang === "zh") { params.set("mkt", "zh-CN"); params.set("setlang", "zh"); }
+  else if (ctx.lang === "en") { params.set("mkt", "en-US"); params.set("setlang", "en"); }
+  let lastErr;
+  for (const host of BING_HOSTS) {
+    try {
+      const { status, body } = await retryFetch(`${host}/search?${params}`, {
+        timeout: ctx.timeout,
+        headers: { referer: `${host}/`, "upgrade-insecure-requests": "1" },
+      });
+      if (status !== 200) throw new Error(`HTTP ${status}`);
+      const results = parseBingResults(ctx, body);
+      if (looksLikeJunk(results, ctx.query)) {
+        throw new Error("bot junk detected (results unrelated to query)");
+      }
+      return results;
+    } catch (e) { lastErr = e; }
   }
+  // All HTML hosts failed — try the RSS pipeline as the last variant.
+  try {
+    const { status, body } = await retryFetch(`https://www.bing.com/search?${params}&format=rss`, {
+      timeout: ctx.timeout,
+      headers: { referer: "https://www.bing.com/", "upgrade-insecure-requests": "1" },
+    });
+    if (status !== 200) throw new Error(`HTTP ${status}`);
+    return parseBingRss(ctx, body);
+  } catch (e) { lastErr = e; }
+  throw lastErr;
+}
+
+// RSS fallback: format=rss serves structured XML from a different content
+// pipeline — HTML bot-junk pages don't affect it, and it tolerates bots best.
+function parseBingRss(ctx, body) {
+  const results = [];
+  const itemRe = /<item>([\s\S]*?)<\/item>/g;
+  for (const m of body.matchAll(itemRe)) {
+    if (results.length >= ctx.n * 2) break;
+    const item = m[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1");
+    const title = stripTags((item.match(/<title>([\s\S]*?)<\/title>/) || [])[1] || "");
+    const link = (item.match(/<link>([\s\S]*?)<\/link>/) || [])[1] || "";
+    const desc = (item.match(/<description>([\s\S]*?)<\/description>/) || [])[1] || "";
+    if (!/^https?:\/\//.test(link) || !title) continue;
+    results.push({ title, url: decodeEntities(link), snippet: decodeEntities(desc).slice(0, 400) });
+  }
+  if (results.length === 0) throw new Error("no results parsed");
   return results;
 }
 
@@ -582,16 +681,15 @@ async function resolveRedirect(url, timeout) {
   return url;
 }
 
-async function engineBaidu(ctx) {
-  const params = new URLSearchParams({ wd: ctx.query, rn: String(Math.min(Math.max(ctx.n, 1), 20)) });
-  const { status, body } = await retryFetch("https://www.baidu.com/s?" + params.toString(), {
-    timeout: ctx.timeout,
-    headers: { referer: "https://www.baidu.com/" },
-  });
-  if (status !== 200) throw new Error(`HTTP ${status}`);
-  if (body.includes("百度安全验证") || body.includes("wappass")) {
-    throw new Error("baidu anti-bot page (security verification)");
-  }
+// Baidu WAF state is per-host. Desktop www first; the mobile SERP
+// (m.baidu.com, `word` param) sits behind a looser WAF and serves as the
+// fallback. The <h3><a> markup is shared by both UIs.
+const BAIDU_VARIANTS = [
+  (q, rn) => ({ url: `https://www.baidu.com/s?wd=${encodeURIComponent(q)}&rn=${rn}`, referer: "https://www.baidu.com/" }),
+  (q, rn) => ({ url: `https://m.baidu.com/s?word=${encodeURIComponent(q)}&rn=${rn}`, referer: "https://www.baidu.com/" }),
+];
+
+function parseBaiduResults(ctx, body) {
   const results = [];
   const re = /<h3[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
   for (const m of body.matchAll(re)) {
@@ -601,15 +699,36 @@ async function engineBaidu(ctx) {
     results.push({ title, url: decodeEntities(m[1]), snippet: "" });
   }
   if (results.length === 0) throw new Error("no results parsed");
-  if (looksLikeJunk(results, ctx.query)) {
-    throw new Error("bot junk detected (results unrelated to query)");
+  return results;
+}
+
+async function engineBaidu(ctx) {
+  const rn = String(Math.min(Math.max(ctx.n, 1), 20));
+  let lastErr;
+  for (const variant of BAIDU_VARIANTS) {
+    const { url, referer } = variant(ctx.query, rn);
+    try {
+      const { status, body } = await retryFetch(url, {
+        timeout: ctx.timeout,
+        headers: { referer },
+      });
+      if (status !== 200) throw new Error(`HTTP ${status}`);
+      if (body.includes("百度安全验证") || body.includes("wappass")) {
+        throw new Error("baidu anti-bot page (security verification)");
+      }
+      const results = parseBaiduResults(ctx, body);
+      if (looksLikeJunk(results, ctx.query)) {
+        throw new Error("bot junk detected (results unrelated to query)");
+      }
+      // Resolve baidu /link redirect wrappers to real targets (fusion dedup
+      // needs canonical URLs).
+      const tops = results.slice(0, ctx.n);
+      const resolved = await Promise.all(tops.map((r) => resolveRedirect(r.url, ctx.timeout)));
+      tops.forEach((r, i) => { r.url = resolved[i]; });
+      return tops;
+    } catch (e) { lastErr = e; }
   }
-  // Resolve baidu /link redirect wrappers to real targets (fusion dedup
-  // needs canonical URLs).
-  const tops = results.slice(0, ctx.n);
-  const resolved = await Promise.all(tops.map((r) => resolveRedirect(r.url, ctx.timeout)));
-  tops.forEach((r, i) => { r.url = resolved[i]; });
-  return tops;
+  throw lastErr;
 }
 
 // Sogou WeChat /link redirects return a JS stub; the real target is embedded
@@ -680,16 +799,10 @@ async function engineSogouWeb(ctx) {
   return tops;
 }
 
-async function engineSo360(ctx) {
-  const params = new URLSearchParams({ q: ctx.query });
-  const { status, body } = await fetchText("https://www.so.com/s?" + params.toString(), {
-    timeout: ctx.timeout,
-    headers: { referer: "https://www.so.com/" },
-  });
-  if (status !== 200) throw new Error(`HTTP ${status}`);
-  if (/验证码|wappass/i.test(body)) {
-    throw new Error("so360 anti-bot page (captcha) — retry later");
-  }
+// WAF state is per-host: desktop www first, then the mobile SERP behind a
+// looser mobile gate (same res-title titles, but links are jump?u=<enc>
+// wrappers on anchors preceding each title, not /link redirects).
+function parseSo360Desktop(ctx, body) {
   const results = [];
   const re = /<h3[^>]*class="res-title[^"]*"[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
   for (const m of body.matchAll(re)) {
@@ -700,10 +813,57 @@ async function engineSo360(ctx) {
     results.push({ title, url: decodeEntities(m[1]), snippet: desc ? stripTags(desc[1]).slice(0, 300) : "" });
   }
   if (results.length === 0) throw new Error("no results parsed");
-  const tops = results.slice(0, ctx.n);
-  const urls = await resolveSo360Links(tops.map((r) => r.url), ctx.timeout);
-  tops.forEach((r, i) => { r.url = urls[i]; });
-  return tops;
+  return results;
+}
+
+function parseSo360Mobile(ctx, body) {
+  const results = [];
+  const re = /<h3 class="res-title">([\s\S]*?)<\/h3>/g;
+  for (const m of body.matchAll(re)) {
+    if (results.length >= ctx.n * 2) break;
+    const title = stripTags(m[1]);
+    if (!title) continue;
+    // Result URL: the closest jump?u=<enc> wrapper before the title (layout
+    // varies by card type; the anchor always precedes the <h3>).
+    const before = body.slice(Math.max(0, m.index - 800), m.index);
+    const links = [...before.matchAll(/jump\?u=([^"'&\s]+)/g)];
+    if (!links.length) continue;
+    const url = decodeURIComponent(links[links.length - 1][1]);
+    if (!/^https?:\/\//.test(url)) continue;
+    const after = body.slice(m.index + m[0].length, m.index + m[0].length + 600);
+    const sm = after.match(/<p class="g-main summary">([\s\S]*?)<\/p>/);
+    results.push({ title, url, snippet: sm ? stripTags(sm[1]).slice(0, 300) : "" });
+  }
+  if (results.length === 0) throw new Error("no results parsed");
+  return results;
+}
+
+const SO360_VARIANTS = [
+  { url: (q) => `https://www.so.com/s?q=${encodeURIComponent(q)}`, referer: "https://www.so.com/", parse: parseSo360Desktop },
+  { url: (q) => `https://m.so.com/s?q=${encodeURIComponent(q)}`, referer: "https://m.so.com/", parse: parseSo360Mobile },
+];
+
+async function engineSo360(ctx) {
+  let lastErr;
+  for (const variant of SO360_VARIANTS) {
+    const { url: buildUrl, referer, parse } = variant;
+    try {
+      const { status, body } = await fetchText(buildUrl(ctx.query), {
+        timeout: ctx.timeout,
+        headers: { referer },
+      });
+      if (status !== 200) throw new Error(`HTTP ${status}`);
+      if (/验证码|wappass/i.test(body)) {
+        throw new Error("so360 anti-bot page (captcha) — retry later");
+      }
+      const results = parse(ctx, body);
+      const tops = results.slice(0, ctx.n);
+      const urls = await resolveSo360Links(tops.map((r) => r.url), ctx.timeout);
+      tops.forEach((r, i) => { r.url = urls[i]; });
+      return tops;
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr;
 }
 
 async function engineSogouWeixin(ctx) {
