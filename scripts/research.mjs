@@ -43,7 +43,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === "--direct") flags.direct = true;
   else rest.push(a);
 }
-const question = rest.join(" ").trim();
+const question = rest.join(" ").trim().replace(/^["']+|["']+$/g, "");
 if (!question) {
   console.error('Usage: node scripts/research.mjs "question" [--queries "q1,q2,q3"] [--depth 2] [--json]');
   process.exit(2);
@@ -86,7 +86,7 @@ const urlHits = new Map(); // url → { engines: Set, count }
 async function runSearch(subQuery) {
   if (budget.searches >= flags.maxSearches) return null;
   budget.searches++;
-  const engineCtx = { query: subQuery, n: 5, days: 0, lang: flags.lang, timeout: flags.timeout, engines: "", json: true, site: [], excludeSite: [], direct: flags.direct, env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k.endsWith('_API_KEY') || k === 'SEARXNG_BASE_URL')) };
+  const engineCtx = { query: subQuery, n: 5, days: 0, lang: flags.lang, timeout: flags.timeout * 1000, engines: "", json: true, site: [], excludeSite: [], direct: flags.direct, env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k.endsWith('_API_KEY') || k === 'SEARXNG_BASE_URL')) };
   const engines = availableEngines("");
   const usable = engines.filter(name => {
     const e = ENGINES[name];
