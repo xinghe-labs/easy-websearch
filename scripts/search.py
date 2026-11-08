@@ -333,7 +333,7 @@ def _looks_like_junk(results, query):
     words = re.findall(r"[a-z][a-z0-9+#.-]{2,}", query.lower())
     if words:
         any_hit = any(
-            any(w in f"{r['title']} {r['url']} {r['snippet']}".lower() for w in words)
+            any(w in f"{r['title']} {r['url']} {r.get('snippet', '')}".lower() for w in words)
             for r in results
         )
         if not any_hit:
@@ -362,6 +362,29 @@ def _parse_bing_results(ctx, body):
     return results
 
 
+def _parse_bing_rss(ctx, body):
+    """RSS fallback: format=rss serves structured XML from a different content
+    pipeline — HTML bot-junk pages don't affect it, and it tolerates bots best.
+    <link> carries the direct target (no /ck/a wrapper)."""
+    results = []
+    for m in re.finditer(r"<item>([\s\S]*?)</item>", body):
+        if len(results) >= ctx["n"] * 2:
+            break
+        item = re.sub(r"<!\[CDATA\[([\s\S]*?)\]\]>", r"\1", m.group(1))
+        tm = re.search(r"<title>([\s\S]*?)</title>", item)
+        lm = re.search(r"<link>([\s\S]*?)</link>", item)
+        dm = re.search(r"<description>([\s\S]*?)</description>", item)
+        title = strip_tags(tm.group(1) if tm else "")
+        link = html.unescape(lm.group(1)) if lm else ""
+        desc = html.unescape(dm.group(1)) if dm else ""
+        if not link.startswith("http") or not title:
+            continue
+        results.append({"title": title, "url": link, "snippet": strip_tags(desc)[:400]})
+    if not results:
+        raise RuntimeError("no results parsed")
+    return results
+
+
 def engine_bing(ctx):
     params = {"q": ctx["query"]}
     if ctx["lang"] == "zh":
@@ -385,8 +408,6 @@ def engine_bing(ctx):
         except (RuntimeError, urllib.error.URLError, OSError) as e:
             last_err = e
     # All HTML hosts failed — try the RSS pipeline as the last variant.
-    # format=rss serves structured XML from a different content pipeline:
-    # HTML bot-junk pages don't affect it, and it tolerates bots best.
     try:
         status, body = http_text(f"https://www.bing.com/search?{qs}&format=rss",
                                   timeout=ctx["timeout"],
@@ -394,23 +415,7 @@ def engine_bing(ctx):
                                            "upgrade-insecure-requests": "1"})
         if status != 200:
             raise RuntimeError(f"HTTP {status}")
-        results = []
-        for m in re.finditer(r"<item>([\s\S]*?)</item>", body):
-            if len(results) >= ctx["n"] * 2:
-                break
-            item = re.sub(r"<!\[CDATA\[([\s\S]*?)\]\]>", r"\1", m.group(1))
-            tm = re.search(r"<title>([\s\S]*?)</title>", item)
-            lm = re.search(r"<link>([\s\S]*?)</link>", item)
-            dm = re.search(r"<description>([\s\S]*?)</description>", item)
-            title = strip_tags(tm.group(1) if tm else "")
-            link = html.unescape(lm.group(1)) if lm else ""
-            desc = html.unescape(dm.group(1)) if dm else ""
-            if not link.startswith("http") or not title:
-                continue
-            results.append({"title": title, "url": link, "snippet": desc[:400]})
-        if not results:
-            raise RuntimeError("no results parsed")
-        return results
+        return _parse_bing_rss(ctx, body)
     except (RuntimeError, urllib.error.URLError, OSError) as e:
         last_err = e
     if last_err is None:  # unreachable — the loop always runs ≥ 1 host

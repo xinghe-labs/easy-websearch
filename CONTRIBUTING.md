@@ -13,6 +13,8 @@ scripts/fetch.mjs     URL → Markdown reader (Node)
 scripts/fetch.py      reader (Python twin)
 scripts/doctor.*      engine health check
 tests/e2e.sh          network-dependent end-to-end matrix
+tests/parity.sh       offline matrix × both runtimes (unit + parser snapshots)
+tests/snapshots/      trimmed real markup fed to the SERP parsers
 references/           engine schemas & research workflow notes
 ```
 
@@ -20,7 +22,15 @@ references/           engine schemas & research workflow notes
 
 - **Zero dependencies.** Scripts use Node core modules / Python stdlib only.
 - **Twins stay in sync.** Every behavior change to `search.mjs`/`fetch.mjs`
-  must land in the `.py` twin in the same PR (and vice versa).
+  must land in the `.py` twin in the same PR (and vice versa). The offline
+  guard is `bash tests/parity.sh` — the same assertion matrix (pure functions
+  + parser snapshots) must pass in both runtimes; it also runs in CI
+  (`.github/workflows/unit-parity.yml`).
+- **Parser changes need a snapshot.** When you touch or add a SERP parser,
+  trim a real markup sample into `tests/snapshots/` and cover it in
+  `tests/parsers.test.mjs` + `tests/parsers_test.py` (keep the two test
+  files in lockstep). Markup drift from engine redesigns then fails offline
+  instead of in production.
 - **Reliability-first.** An engine failure must degrade (throw a clear error,
   be caught by the runner), never crash the whole run.
 - **Honest output.** Report per-engine status; never invent or silently drop

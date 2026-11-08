@@ -1,0 +1,30 @@
+name: unit-parity
+
+# Offline test matrix run in BOTH runtimes (node + python twins): pure
+# functions + SERP parser snapshots. Parser markup drift (engine HTML changes)
+# or a twin implementation drifting apart fails here before users hit it.
+
+on:
+  push:
+    paths: ["scripts/**", "tests/**"]
+  pull_request:
+    paths: ["scripts/**", "tests/**"]
+  workflow_dispatch: {}
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@101b3474143230c3562bd21f0b3c3f8254784571 # v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v5
+        with:
+          python-version: "3.12"
+      - name: Run parity matrix (both runtimes)
+        run: bash tests/parity.sh

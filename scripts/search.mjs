@@ -470,7 +470,7 @@ function parseBingRss(ctx, body) {
     const link = (item.match(/<link>([\s\S]*?)<\/link>/) || [])[1] || "";
     const desc = (item.match(/<description>([\s\S]*?)<\/description>/) || [])[1] || "";
     if (!/^https?:\/\//.test(link) || !title) continue;
-    results.push({ title, url: decodeEntities(link), snippet: decodeEntities(desc).slice(0, 400) });
+    results.push({ title, url: decodeEntities(link), snippet: stripTags(desc).slice(0, 400) });
   }
   if (results.length === 0) throw new Error("no results parsed");
   return results;
@@ -1393,4 +1393,6 @@ import { pathToFileURL } from "node:url";
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) await main();
 
-export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk, cooldownPath, searxngBaseAndAuth, setForceDirect, routeAuto, extractIntlQuery, fetchText, stripTags, parseJson, normalizeUrl, fuse };
+export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk, cooldownPath, searxngBaseAndAuth, setForceDirect, routeAuto, extractIntlQuery, fetchText, stripTags, parseJson, normalizeUrl, fuse,
+  // SERP parsers (tested against tests/snapshots/ in both runtimes)
+  parseDdgHtml, parseDdgLite, parseBingResults, parseBingRss, parseBaiduResults, parseSo360Desktop, parseSo360Mobile };

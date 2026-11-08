@@ -1,0 +1,7 @@
+<!-- Trimmed real markup: Bing RSS pipeline (search?q=...&format=rss).
+     Verified 2026-11-08: <link> carries the direct target (no /ck/a wrapper);
+     descriptions may be CDATA-wrapped or entity-encoded. -->
+<rss version="2.0"><channel><title>q: webgpu - Bing</title>
+<item><title>WebGPU API - MDN</title><link>https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API</link><description><![CDATA[WebGPU <b>API</b> reference docs.]]></description></item>
+<item><title>Learn WebGPU</title><link>https://webgpufundamentals.org/</link><description>WebGPU tutorial &amp; samples</description></item>
+</channel></rss>
