@@ -1011,8 +1011,9 @@ function routeAuto(query) {
   if (/(论文|文献|arxiv|学术|research paper|preprint)/.test(q)) add.push("arxiv", "openalex", "crossref", "pubmed");
   if (/(什么是|百科|维基百科|wikipedia|是谁|who is|history of)/.test(q)) add.push("wikipedia");
   if (/(hacker\s?news|show\s?hn|tech news|科技新闻)/.test(q)) add.push("hn");
-  if (/(掘金|juejin|csdn|前端开发|javascript 教程|vue\b|react\b)/.test(q)) add.push("juejin", "csdn");
-  if (/(huggingface|数据集|dataset|模型权重|model weights|safetensors|embedding 模型)/.test(q)) add.push("huggingface");
+  if (/(掘金|juejin|前端开发|javascript 教程|vue\b|react\b)/.test(q)) add.push("juejin");
+  if (/(csdn|CSDN)/.test(q)) add.push("csdn");
+  if (/(huggingface|数据集|dataset|模型权重|safetensors)/.test(q)) add.push("huggingface");
   return { engines: add, intlQuery: extractIntlQuery(query) };
 }
 
@@ -1201,4 +1202,4 @@ import { pathToFileURL } from "node:url";
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) await main();
 
-export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk, cooldownPath, searxngBaseAndAuth, setForceDirect, routeAuto, extractIntlQuery };
+export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk, cooldownPath, searxngBaseAndAuth, setForceDirect, routeAuto, extractIntlQuery, fetchText, stripTags, parseJson, normalizeUrl, fuse };
