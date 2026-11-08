@@ -110,6 +110,24 @@ Interpreting results:
   `node scripts/doctor.mjs --clear-cooldown`; override with `--engine <name>`
   or `--no-cooldown` when the user asks to retry.
 
+## Research (multi-round evidence collector)
+
+For broad research questions ("研究 X", "compare A vs B", "latest developments in X"):
+
+```bash
+node scripts/research.mjs "question" --json
+python3 scripts/research.py "question" --json
+```
+
+Automatically decomposes the question into sub-queries, runs parallel searches
+across the pool, fetches top pages, and outputs a structured evidence pack
+(original text + sources + cross-hit annotations) for the agent to summarize.
+Do NOT summarize in the script — the agent reads the evidence pack and writes
+the answer with inline citations.
+
+Options: `--queries "q1,q2,q3"` (agent-provided sub-queries, best quality),
+`--depth 2` (pages per sub-query), `--max-searches 8`, `--max-fetches 12`.
+
 ## Health check (doctor)
 
 When search results look odd or the user asks what engines are configured:

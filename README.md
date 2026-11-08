@@ -114,6 +114,7 @@ setup as subcommands. Or run without installing: `npx easy-websearch@latest doct
 ```bash
 easy-websearch search "大模型 本地部署" --lang zh -n 5
 easy-websearch fetch "https://example.com/article"
+easy-websearch research "compare local LLM deployment options" --json
 easy-websearch doctor
 ```
 
@@ -173,6 +174,18 @@ instance side:
 
 A private instance gives you an unlimited engine with no API keys and no
 rate limits — a clean alternative to sharing accounts.
+
+## Research mode
+
+Multi-round evidence collection (the agent writes the answer):
+
+```bash
+easy-websearch research "compare local LLM deployment options" --json
+```
+
+Decomposes into sub-queries → parallel search → fetches top pages → outputs
+a structured evidence pack with cross-hit annotations. The agent reads this
+and writes the cited answer.
 
 ## Usage
 

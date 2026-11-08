@@ -104,6 +104,7 @@ setup 四个子命令。或免安装直接跑：`npx easy-websearch@latest docto
 ```bash
 easy-websearch search "大模型 本地部署" --lang zh -n 5
 easy-websearch fetch "https://example.com/article"
+easy-websearch research "对比本地大模型部署方案" --json
 easy-websearch doctor
 ```
 
@@ -161,6 +162,17 @@ export SEARXNG_BASE_URL=http://localhost:8080   # 或 https://searx.example.com
 2. **可达性** —— skill 会遵守 `HTTPS_PROXY`；本地实例应直连可达。
 
 私有实例 = 无配额、无 API key 的额外引擎，也是替代“共享账号”的干净方案。
+
+## 研究模式
+
+多轮证据收集（agent 负责判断和写作，脚本负责找全抓全）：
+
+```bash
+easy-websearch research "对比本地大模型部署方案" --json
+```
+
+自动拆解子查询 → 并行搜索 → 抓取 top 页面 → 输出证据包（原文 + 来源 +
+交叉命中标注），agent 读证据包写带引用的回答。
 
 ## 用法
 

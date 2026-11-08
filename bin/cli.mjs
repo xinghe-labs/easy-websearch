@@ -28,6 +28,7 @@ const SCRIPTS = {
   fetch: "fetch.mjs",
   doctor: "doctor.mjs",
   setup: "setup.mjs",
+  research: "research.mjs",
 };
 
 const [, , cmd, ...rest] = process.argv;
@@ -40,6 +41,7 @@ Usage:
   easy-websearch fetch <url> [options]      read a page as Markdown
   easy-websearch doctor [options]           engine health check
   easy-websearch setup [options]            install the skill into agent dirs
+  easy-websearch research "q" [options]     multi-round evidence collector
 
 Common search options:  --lang zh|en   -n 10   --days 7   --site d
                         --engine ddg,bing   --json   --timeout 8
