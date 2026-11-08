@@ -1108,6 +1108,24 @@ def main():
     p.add_argument("--json", action="store_true")
     args = p.parse_args()
 
+    # Config file: ~/.config/easy-websearch/config.json (CLI flags override)
+    _cfg_path = os.path.join(
+        os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+        "easy-websearch", "config.json")
+    try:
+        with open(_cfg_path, encoding="utf-8") as f:
+            _cfg = json.load(f)
+    except (OSError, ValueError):
+        _cfg = {}
+    if not args.lang and _cfg.get("lang"):
+        args.lang = _cfg["lang"]
+    if args.num == 10 and _cfg.get("n"):
+        args.num = _cfg["n"]
+    if not args.direct and _cfg.get("direct"):
+        args.direct = True
+    if not args.engine and _cfg.get("engines"):
+        args.engine = _cfg["engines"]
+
     env = {k: os.environ[k] for k in
            ("BRAVE_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY", "EXA_API_KEY",
             "FIRECRAWL_API_KEY", "BOCHA_API_KEY", "METASO_API_KEY", "LINKUP_API_KEY",

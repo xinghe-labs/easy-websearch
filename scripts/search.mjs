@@ -29,6 +29,15 @@ const UA =
 const DEFAULT_TIMEOUT = 8000;
 const RRF_K = 60;
 
+// ------------------------------------------------------------ config ----
+// ~/.config/easy-websearch/config.json — defaults for CLI flags.
+// CLI flags override config values. Env vars still override config for keys.
+function loadConfig() {
+  const base = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+  const p = path.join(base, "easy-websearch", "config.json");
+  try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return {}; }
+}
+
 // ---------------------------------------------------------------- args ----
 const USAGE = 'Usage: node search.mjs "query" [-n 10] [--days 7] [--site d] [--exclude-site d] [--lang zh] [--engine ddg,bing] [--timeout 8] [--no-cooldown] [--direct] [--json]';
 
@@ -54,13 +63,14 @@ Options:
   --direct                bypass any proxy for all engines (see README Troubleshooting)
   --json                  machine-readable output
   -h, --help              show this help
-See README.md for details. Run scripts/doctor.mjs to check engine health.`);
+See README.md for details. Config: ~/.config/easy-websearch/config.json\nRun scripts/doctor.mjs to check engine health.`);
 }
 
 function parseArgs(argv) {
+  const config = loadConfig();
   const args = {
-    query: "", n: 10, days: 0, site: [], excludeSite: [], lang: "",
-    engines: "", timeout: DEFAULT_TIMEOUT, json: false, noCooldown: false,
+    query: "", n: config.n || 10, days: config.days || 0, site: [], excludeSite: [], lang: config.lang || "",
+    engines: config.engines || "", timeout: (config.timeout || 8) * 1000, json: false, noCooldown: false,
     direct: false, help: false,
   };
   const rest = [];
