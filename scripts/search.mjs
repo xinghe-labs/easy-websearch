@@ -202,6 +202,28 @@ function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_
   });
 }
 
+// ─────────────────────────────── retry with backoff ──
+// Retry transient failures (timeout, 403, 429, 5xx) with exponential backoff.
+// Only for GET requests (idempotent). 1 retry, 500ms delay.
+const RETRYABLE = new Set(["timeout", "ECONNRESET", "ECONNREFUSED", "ENOTFOUND"]);
+
+function isRetryable(err) {
+  if (err.message === "timeout") return true;
+  if (/HTTP [45]\d\d/.test(err.message)) return true;
+  for (const code of RETRYABLE) if (err.message.includes(code)) return true;
+  return false;
+}
+
+async function retryFetch(url, opts = {}, depth = 0) {
+  try {
+    return await fetchText(url, opts, depth);
+  } catch (err) {
+    if (!isRetryable(err) || opts.method === "POST" || depth >= 1) throw err;
+    await new Promise((r) => setTimeout(r, 500));
+    return retryFetch(url, opts, depth + 1);
+  }
+}
+
 // ------------------------------------------------------------ helpers ----
 function parseJson(body) {
   try {
@@ -314,7 +336,7 @@ async function engineBing(ctx) {
   const params = new URLSearchParams({ q: ctx.query });
   if (ctx.lang === "zh") { params.set("mkt", "zh-CN"); params.set("setlang", "zh"); }
   else if (ctx.lang === "en") { params.set("mkt", "en-US"); params.set("setlang", "en"); }
-  const { status, body } = await fetchText(`https://www.bing.com/search?${params}`, {
+  const { status, body } = await retryFetch(`https://www.bing.com/search?${params}`, {
     timeout: ctx.timeout,
     headers: { referer: "https://www.bing.com/", "upgrade-insecure-requests": "1" },
   });
@@ -552,7 +574,7 @@ async function resolveRedirect(url, timeout) {
 
 async function engineBaidu(ctx) {
   const params = new URLSearchParams({ wd: ctx.query, rn: String(Math.min(Math.max(ctx.n, 1), 20)) });
-  const { status, body } = await fetchText("https://www.baidu.com/s?" + params.toString(), {
+  const { status, body } = await retryFetch("https://www.baidu.com/s?" + params.toString(), {
     timeout: ctx.timeout,
     headers: { referer: "https://www.baidu.com/" },
   });
@@ -625,7 +647,7 @@ function resolveSo360Links(urls, timeout) {
 
 async function engineSogouWeb(ctx) {
   const params = new URLSearchParams({ query: ctx.query });
-  const { status, body } = await fetchText("https://www.sogou.com/web?" + params.toString(), {
+  const { status, body } = await retryFetch("https://www.sogou.com/web?" + params.toString(), {
     timeout: ctx.timeout,
     headers: { referer: "https://www.sogou.com/" },
   });
@@ -720,7 +742,7 @@ async function engineWikipedia(ctx) {
   });
   // Wikipedia via slow proxies sits right at the generic timeout — give it 1.5×.
   const wikiTimeout = Math.max(ctx.timeout * 1.5, 12000);
-  const { status, body } = await fetchText(`https://${lang}.wikipedia.org/w/api.php?${params}`, {
+  const { status, body } = await retryFetch(`https://${lang}.wikipedia.org/w/api.php?${params}`, {
     timeout: wikiTimeout, headers: { accept: "application/json" },
   });
   if (status !== 200) throw new Error(`HTTP ${status}`);
@@ -737,7 +759,7 @@ async function engineStackExchange(ctx) {
     intitle: ctx.query, site: "stackoverflow",
     pagesize: String(Math.min(ctx.n, 10)),
   });
-  const { status, body } = await fetchText(`https://api.stackexchange.com/2.3/search/excerpts?${params}`, {
+  const { status, body } = await retryFetch(`https://api.stackexchange.com/2.3/search/excerpts?${params}`, {
     timeout: ctx.timeout, headers: { accept: "application/json" },
   });
   if (status !== 200) throw new Error(`HTTP ${status}`);
@@ -753,7 +775,7 @@ async function engineStackExchange(ctx) {
 
 async function engineHn(ctx) {
   const params = new URLSearchParams({ query: ctx.query, hitsPerPage: String(Math.min(ctx.n, 10)) });
-  const { status, body } = await fetchText(`https://hn.algolia.com/api/v1/search?${params}`, {
+  const { status, body } = await retryFetch(`https://hn.algolia.com/api/v1/search?${params}`, {
     timeout: ctx.timeout, headers: { accept: "application/json" },
   });
   if (status !== 200) throw new Error(`HTTP ${status}`);
@@ -769,7 +791,7 @@ async function engineHn(ctx) {
 
 async function engineGithub(ctx) {
   const params = new URLSearchParams({ q: ctx.query, per_page: String(Math.min(ctx.n, 10)) });
-  const { status, body } = await fetchText(`https://api.github.com/search/repositories?${params}`, {
+  const { status, body } = await retryFetch(`https://api.github.com/search/repositories?${params}`, {
     timeout: ctx.timeout,
     headers: { accept: "application/vnd.github+json" },
   });
@@ -827,7 +849,7 @@ async function engineArxiv(ctx) {
 }
 
 async function engineMwmbl(ctx) {
-  const { status, body } = await fetchText(`https://api.mwmbl.org/api/v1/search/?s=${encodeURIComponent(ctx.query)}`, {
+  const { status, body } = await retryFetch(`https://api.mwmbl.org/api/v1/search/?s=${encodeURIComponent(ctx.query)}`, {
     timeout: ctx.timeout, headers: { accept: "application/json" },
   });
   if (status !== 200) throw new Error(`HTTP ${status}`);
@@ -862,7 +884,7 @@ async function engineCSDN(ctx) {
 
 async function engineOpenAlex(ctx) {
   const params = new URLSearchParams({ search: ctx.query, "per-page": String(Math.min(ctx.n, 10)) });
-  const { status, body } = await fetchText(`https://api.openalex.org/works?${params}`, {
+  const { status, body } = await retryFetch(`https://api.openalex.org/works?${params}`, {
     timeout: ctx.timeout, headers: { accept: "application/json" },
   });
   if (status !== 200) throw new Error(`HTTP ${status}`);
@@ -880,7 +902,7 @@ async function engineOpenAlex(ctx) {
 
 async function engineCrossref(ctx) {
   const params = new URLSearchParams({ query: ctx.query, rows: String(Math.min(ctx.n, 10)) });
-  const { status, body } = await fetchText(`https://api.crossref.org/works?${params}`, {
+  const { status, body } = await retryFetch(`https://api.crossref.org/works?${params}`, {
     timeout: ctx.timeout, headers: { accept: "application/json" },
   });
   if (status !== 200) throw new Error(`HTTP ${status}`);
@@ -918,7 +940,7 @@ async function enginePubMed(ctx) {
 
 async function engineHuggingFace(ctx) {
   const params = new URLSearchParams({ search: ctx.query, limit: String(Math.min(ctx.n, 10)) });
-  const { status, body } = await fetchText(`https://huggingface.co/api/models?${params}`, {
+  const { status, body } = await retryFetch(`https://huggingface.co/api/models?${params}`, {
     timeout: ctx.timeout, headers: { accept: "application/json" },
   });
   if (status !== 200) throw new Error(`HTTP ${status}`);

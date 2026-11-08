@@ -128,6 +128,27 @@ def http_text(url: str, method: str = "GET", headers: dict | None = None,
         return e.code, e.read().decode("utf-8", "ignore")
 
 
+import time as _time
+
+_RETRYABLE_HTTP = {403, 429, 500, 502, 503, 504}
+
+
+def retry_http_text(url, method="GET", headers=None, data=None, timeout=8,
+                    direct=False, retries=1):
+    """http_text with one retry for transient failures (GET only)."""
+    for attempt in range(retries + 1):
+        try:
+            status, body = http_text(url, method=method, headers=headers,
+                                     data=data, timeout=timeout, direct=direct)
+            if status == 200 or status not in _RETRYABLE_HTTP or attempt >= retries:
+                return status, body
+        except (RuntimeError, urllib.error.URLError, OSError):
+            if attempt >= retries:
+                raise
+        _time.sleep(0.5 * (attempt + 1))
+    raise RuntimeError("unreachable")
+
+
 def http_text_final(url: str, headers: dict | None = None,
                     timeout: float = 8) -> tuple[int, str, str]:
     """GET an http(s) URL and return (status, body, final_url) after redirects."""
@@ -514,7 +535,7 @@ def _resolve_redirect(url: str, timeout: float) -> str:
 
 def engine_baidu(ctx):
     params = {"wd": ctx["query"], "rn": str(min(max(ctx["n"], 1), 20))}
-    status, body = http_text("https://www.baidu.com/s?" + urllib.parse.urlencode(params),
+    status, body = retry_http_text("https://www.baidu.com/s?" + urllib.parse.urlencode(params),
                              timeout=ctx["timeout"], direct=True,
                              headers={"referer": "https://www.baidu.com/"})
     if status != 200:
@@ -593,7 +614,7 @@ def _resolve_so360_links(urls, timeout):
 
 def engine_sogou_web(ctx):
     params = {"query": ctx["query"]}
-    status, body = http_text("https://www.sogou.com/web?" + urllib.parse.urlencode(params),
+    status, body = retry_http_text("https://www.sogou.com/web?" + urllib.parse.urlencode(params),
                              timeout=ctx["timeout"], direct=True,
                              headers={"referer": "https://www.sogou.com/"})
     if status != 200:
@@ -619,7 +640,7 @@ def engine_sogou_web(ctx):
 
 def engine_so360(ctx):
     params = {"q": ctx["query"]}
-    status, body = http_text("https://www.so.com/s?" + urllib.parse.urlencode(params),
+    status, body = retry_http_text("https://www.so.com/s?" + urllib.parse.urlencode(params),
                              timeout=ctx["timeout"], direct=True,
                              headers={"referer": "https://www.so.com/"})
     if status != 200:
@@ -694,7 +715,7 @@ def engine_wikipedia(ctx):
     params = {"action": "query", "list": "search", "srsearch": ctx["query"],
               "format": "json", "srlimit": str(min(ctx["n"], 10))}
     # Wikipedia via slow proxies sits right at the generic timeout — give it 1.5×.
-    status, body = http_text(f"https://{lang}.wikipedia.org/w/api.php?{urllib.parse.urlencode(params)}",
+    status, body = retry_http_text(f"https://{lang}.wikipedia.org/w/api.php?{urllib.parse.urlencode(params)}",
                              timeout=max(ctx["timeout"] * 1.5, 12), headers={"accept": "application/json"})
     if status != 200:
         raise RuntimeError(f"HTTP {status}")
@@ -708,7 +729,7 @@ def engine_stack_exchange(ctx):
     query = ctx.get("intl_query") or ctx["query"]
     params = {"intitle": ctx["query"], "site": "stackoverflow",
               "pagesize": str(min(ctx["n"], 10))}
-    status, body = http_text("https://api.stackexchange.com/2.3/search/excerpts?" + urllib.parse.urlencode(params),
+    status, body = retry_http_text("https://api.stackexchange.com/2.3/search/excerpts?" + urllib.parse.urlencode(params),
                              timeout=ctx["timeout"], headers={"accept": "application/json"})
     if status != 200:
         raise RuntimeError(f"HTTP {status}")
@@ -722,7 +743,7 @@ def engine_stack_exchange(ctx):
 def engine_hn(ctx):
     query = ctx.get("intl_query") or ctx["query"]
     params = {"query": ctx["query"], "hitsPerPage": str(min(ctx["n"], 10))}
-    status, body = http_text("https://hn.algolia.com/api/v1/search?" + urllib.parse.urlencode(params),
+    status, body = retry_http_text("https://hn.algolia.com/api/v1/search?" + urllib.parse.urlencode(params),
                              timeout=ctx["timeout"], headers={"accept": "application/json"})
     if status != 200:
         raise RuntimeError(f"HTTP {status}")
@@ -740,7 +761,7 @@ def engine_hn(ctx):
 def engine_github(ctx):
     query = ctx.get("intl_query") or ctx["query"]
     params = {"q": ctx["query"], "per_page": str(min(ctx["n"], 10))}
-    status, body = http_text("https://api.github.com/search/repositories?" + urllib.parse.urlencode(params),
+    status, body = retry_http_text("https://api.github.com/search/repositories?" + urllib.parse.urlencode(params),
                              timeout=ctx["timeout"],
                              headers={"accept": "application/vnd.github+json"})
     if status == 403:
@@ -800,7 +821,7 @@ def engine_arxiv(ctx):
 
 
 def engine_mwmbl(ctx):
-    status, body = http_text("https://api.mwmbl.org/api/v1/search/?s=" + urllib.parse.quote(ctx["query"]),
+    status, body = retry_http_text("https://api.mwmbl.org/api/v1/search/?s=" + urllib.parse.quote(ctx["query"]),
                              timeout=ctx["timeout"], headers={"accept": "application/json"})
     if status != 200:
         raise RuntimeError(f"HTTP {status}")
@@ -857,7 +878,7 @@ def engine_csdn(ctx):
 def engine_openalex(ctx):
     query = ctx.get("intl_query") or ctx["query"]
     params = {"search": query, "per-page": str(min(ctx["n"], 10))}
-    status, body = http_text("https://api.openalex.org/works?" + urllib.parse.urlencode(params),
+    status, body = retry_http_text("https://api.openalex.org/works?" + urllib.parse.urlencode(params),
                              timeout=ctx["timeout"], headers={"accept": "application/json"})
     if status != 200:
         raise RuntimeError(f"HTTP {status}")
@@ -875,7 +896,7 @@ def engine_openalex(ctx):
 def engine_crossref(ctx):
     query = ctx.get("intl_query") or ctx["query"]
     params = {"query": query, "rows": str(min(ctx["n"], 10))}
-    status, body = http_text("https://api.crossref.org/works?" + urllib.parse.urlencode(params),
+    status, body = retry_http_text("https://api.crossref.org/works?" + urllib.parse.urlencode(params),
                              timeout=ctx["timeout"], headers={"accept": "application/json"})
     if status != 200:
         raise RuntimeError(f"HTTP {status}")
@@ -895,7 +916,7 @@ def engine_pubmed(ctx):
     query = ctx.get("intl_query") or ctx["query"]
     base = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
     params = {"db": "pubmed", "term": query, "retmode": "json", "retmax": str(min(ctx["n"], 10))}
-    status, body = http_text(f"{base}/esearch.fcgi?{urllib.parse.urlencode(params)}",
+    status, body = retry_http_text(f"{base}/esearch.fcgi?{urllib.parse.urlencode(params)}",
                              timeout=ctx["timeout"], headers={"accept": "application/json"})
     if status != 200:
         raise RuntimeError(f"esearch HTTP {status}")
@@ -903,7 +924,7 @@ def engine_pubmed(ctx):
     if not ids:
         return []
     params2 = {"db": "pubmed", "id": ",".join(ids), "retmode": "json"}
-    status, body = http_text(f"{base}/esummary.fcgi?{urllib.parse.urlencode(params2)}",
+    status, body = retry_http_text(f"{base}/esummary.fcgi?{urllib.parse.urlencode(params2)}",
                              timeout=ctx["timeout"], headers={"accept": "application/json"})
     if status != 200:
         raise RuntimeError(f"esummary HTTP {status}")
@@ -920,7 +941,7 @@ def engine_pubmed(ctx):
 def engine_huggingface(ctx):
     query = ctx.get("intl_query") or ctx["query"]
     params = {"search": query, "limit": str(min(ctx["n"], 10))}
-    status, body = http_text("https://huggingface.co/api/models?" + urllib.parse.urlencode(params),
+    status, body = retry_http_text("https://huggingface.co/api/models?" + urllib.parse.urlencode(params),
                              timeout=ctx["timeout"], headers={"accept": "application/json"})
     if status != 200:
         raise RuntimeError(f"HTTP {status}")
