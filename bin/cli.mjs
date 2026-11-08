@@ -29,6 +29,7 @@ const SCRIPTS = {
   doctor: "doctor.mjs",
   setup: "setup.mjs",
   research: "research.mjs",
+  "mcp-serve": "../server.mjs",
 };
 
 const [, , cmd, ...rest] = process.argv;
@@ -42,6 +43,7 @@ Usage:
   easy-websearch doctor [options]           engine health check
   easy-websearch setup [options]            install the skill into agent dirs
   easy-websearch research "q" [options]     multi-round evidence collector
+  easy-websearch mcp-serve                  start MCP server (JSON-RPC 2.0 stdio)
 
 Common search options:  --lang zh|en   -n 10   --days 7   --site d
                         --engine ddg,bing   --json   --timeout 8
