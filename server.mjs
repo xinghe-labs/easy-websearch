@@ -22,7 +22,9 @@ import {
 } from "./scripts/search.mjs";
 
 // ────────────────────────────────────────── state ──
-const SERVER_INFO = { name: "easy-websearch", version: "1.7.0" };
+import { readFileSync } from "node:fs";
+const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
+const SERVER_INFO = { name: "easy-websearch", version: pkg.version };
 const PROTOCOL_VERSION = "2024-11-05";
 
 // ─────────────────────────────── tool definitions ──
