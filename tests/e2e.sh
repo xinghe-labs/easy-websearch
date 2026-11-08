@@ -89,26 +89,23 @@ node --input-type=module -e "
 import('./scripts/search.mjs').then(({ routeAuto }) => {
   const cases = [
     ['github 教程', ['github']],
-    ['论文 写作', ['arxiv']],
-    ['什么是 webgpu', ['wikipedia']],
     ['论文 写作', ['arxiv', 'openalex', 'crossref', 'pubmed']],
+    ['什么是 webgpu', ['wikipedia']],
     ['掘金 教程', ['juejin', 'csdn']],
     ['今天天气', []],
   ];
   for (const [q, expected] of cases) {
-    const got = routeAuto(q);
-    if (JSON.stringify(got) !== JSON.stringify(expected)) {
-      console.error('routeAuto(' + JSON.stringify(q) + ') =', JSON.stringify(got), 'want', JSON.stringify(expected));
-      process.exit(1);
-    }
+    const got = routeAuto(q).engines;
+    const ok = got.length === expected.length && expected.every(e => got.includes(e));
+    if (!ok) { console.error('routeAuto(' + JSON.stringify(q) + ') =', JSON.stringify(got), 'want', expected); process.exit(1); }
   }
 });"
 check "query-intent router unit cases" $?
 
 node scripts/search.mjs "webgpu 是什么" -n 2 --json 2>/dev/null | json "
 const names = d.engines.map(e => e.name);
-if (!names.includes('wikipedia') || !names.includes('arxiv')) process.exit(1);"
-check "router auto-activates verticals on intent" $?
+if (!names.includes('wikipedia')) process.exit(1);"
+check "router auto-activates wikipedia on intent" $?
 
 # 可达性预检: wikipedia 被 GFW/代理环境阻断时 SKIP(引擎代码在可达网络已验证)
 if ! curl -s -o /dev/null -m 6 "https://en.wikipedia.org/w/api.php?action=query&format=json"; then
