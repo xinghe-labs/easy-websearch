@@ -1351,10 +1351,13 @@ def main():
 
     statuses = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(engines)) as ex:
-        futures = {ex.submit(fn, ctx): name for name, fn in engines}
+        futures = {}
+        for name, fn in engines:
+            # Record t0 at submit time — fut.result() only returns after the
+            # work is done, so timing around it always reports ~0ms.
+            futures[ex.submit(fn, ctx)] = (name, time.time())
         for fut in concurrent.futures.as_completed(futures):
-            name = futures[fut]
-            t0 = time.time()
+            name, t0 = futures[fut]
             try:
                 results = fut.result()
                 statuses.append({"name": name, "ok": True, "count": len(results),
