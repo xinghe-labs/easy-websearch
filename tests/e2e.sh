@@ -61,10 +61,15 @@ check "baidu in default set, searxng hidden" $?
 
 node scripts/search.mjs "webgpu" -n 1 --json 2>/dev/null | json "
 const names = d.engines.map(e => e.name);
-for (const auto of ['wikipedia','stackexchange','github','hn','juejin','arxiv','mwmbl','csdn','openalex','crossref','pubmed','huggingface']) {
+// stackexchange + github are auto tier (quota-sensitive) — hidden from default
+for (const auto of ['stackexchange', 'github']) {
   if (names.includes(auto)) process.exit(1);
+}
+// wikipedia/hn/juejin/arxiv/mwmbl/csdn/openalex/crossref/pubmed/huggingface are in default pool now
+for (const required of ['baidu', 'sogouweb', 'so360']) {
+  if (!names.includes(required)) process.exit(1);
 }"
-check "auto tier hidden from default pool" $?
+check "stackexchange/github auto-only, verticals in default pool" $?
 
 SEARXNG_BASE_URL=http://127.0.0.1:9 node scripts/search.mjs "test" -n 1 --json 2>/dev/null | json "
 const s = d.engines.find(e => e.name === 'searxng');
