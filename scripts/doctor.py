@@ -82,6 +82,10 @@ def main() -> None:
         "SEARXNG_BASE_URL": "self-hosted — see README SearXNG section",
         "ANYSEARCH_API_KEY": "anysearch.com",
         "KEENABLE_API_KEY": "keenable.ai",
+        "GOOGLE_API_KEY": "console.cloud.google.com → APIs → Custom Search API",
+        "GOOGLE_CX": "programmablesearchengine.google.com → search engine id",
+        "GITEE_TOKEN": "gitee.com/profile/personal_access_tokens",
+        "S2_API_KEY": "semanticscholar.org/product/api (free, lifts 429s)",
     }
 
     def probe(name: str) -> dict:
