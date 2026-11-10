@@ -29,10 +29,14 @@ import {
 
 // ────────────────────────────────────────────── CLI ──
 const argv = process.argv.slice(2);
+const USAGE = 'Usage: node scripts/research.mjs "question" [--queries "q1,q2,q3"] [--depth 2] [--lang zh] [--max-searches 8] [--max-fetches 12] [--json]';
 const flags = { queries: "", depth: 2, lang: "", maxSearches: 8, maxFetches: 12, timeout: 8, json: false, direct: false };
 const rest = [];
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
+  // --help must never be treated as a question: it would launch a full
+  // research run against the literal word "--help".
+  if (a === "--help" || a === "-h") { console.log(USAGE); process.exit(0); }
   if (a === "--queries") flags.queries = argv[++i] || "";
   else if (a === "--depth") flags.depth = parseInt(argv[++i], 10) || 2;
   else if (a === "--lang") flags.lang = argv[++i] || "";
@@ -45,7 +49,7 @@ for (let i = 0; i < argv.length; i++) {
 }
 const question = rest.join(" ").trim().replace(/^["']+|["']+$/g, "");
 if (!question) {
-  console.error('Usage: node scripts/research.mjs "question" [--queries "q1,q2,q3"] [--depth 2] [--json]');
+  console.error(USAGE);
   process.exit(2);
 }
 
