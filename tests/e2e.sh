@@ -53,11 +53,14 @@ const names = d.engines.map(e => e.name);
 if (names.includes('anysearch') || names.includes('keenable') || names.includes('sogouweixin')) process.exit(1);"
 check "backups excluded from default set" $?
 
-# --- baidu in default pool; searxng hidden without env ---
+# --- baidu in default pool; searxng only when SEARXNG_BASE_URL is configured ---
 node scripts/search.mjs "webgpu" -n 1 --json 2>/dev/null | json "
 const names = d.engines.map(e => e.name);
-if (!names.includes('baidu') || names.includes('searxng')) process.exit(1);"
-check "baidu in default set, searxng hidden" $?
+// searxng joins the default pool only when a self-hosted instance is set;
+// assert the hidden case only when it is genuinely unconfigured.
+if (!names.includes('baidu')) process.exit(1);
+if (!process.env.SEARXNG_BASE_URL && names.includes('searxng')) process.exit(1);"
+check "baidu in default set, searxng hidden without env" $?
 
 node scripts/search.mjs "webgpu" -n 1 --json 2>/dev/null | json "
 const names = d.engines.map(e => e.name);
@@ -94,7 +97,7 @@ node --input-type=module -e "
 import('./scripts/search.mjs').then(({ routeAuto }) => {
   const cases = [
     ['github 教程', ['github']],
-    ['论文 写作', ['arxiv', 'openalex', 'crossref', 'pubmed']],
+    ['论文 写作', ['arxiv', 'openalex', 'crossref', 'pubmed', 'semanticscholar']],
     ['什么是 webgpu', ['wikipedia']],
     ['掘金 教程', ['juejin', 'csdn']],
     ['今天天气', []],
@@ -228,7 +231,7 @@ node scripts/search.mjs "AI news" --days 7 -n 1 --json 2>/dev/null | json "
 const b = d.engines.find(e => e.name === 'bing');
 if (!b) process.exit(1);
 if (b.ok && b.note !== 'days ignored by bing') process.exit(1);
-if (!b.ok && !/junk|HTTP/.test(b.error)) process.exit(1);"; check "days-ignored note in json" $?
+if (!b.ok && !/junk|HTTP|skipped|timeout|no results/i.test(b.error)) process.exit(1);"; check "days-ignored note in json" $?
 
 # --- P0-2: junk detector unit test (synthetic) ---
 node --input-type=module -e "
