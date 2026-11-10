@@ -5,27 +5,46 @@ Zero dependencies (stdlib only). Python >= 3.11. Honors HTTP(S)_PROXY env
 vars automatically via urllib.
 
 Usage:
-  python3 doctor.py [--timeout 8] [--json]
+  python3 doctor.py [--timeout 8] [--json] [--strict]
 
 Runs one tiny real search per available engine (concurrently) and reports
-per-engine status, latency, and configuration gaps. Exit code: 0 all tested
-engines OK, 1 any failure, 2 nothing testable.
+per-engine status, latency, and configuration gaps.
+
+Status: OK | SKIP (key not set) | WARN (transient: anti-bot, rate limit,
+timeout, unparsable response) | FAIL (real problem, e.g. bad config).
+By default transient failures are reported as WARN and do NOT change the
+exit code — public engines block datacenter exits all the time and that is
+not a broken install. `--strict` treats every failure as FAIL.
+
+Exit code: 0 all tested engines OK or WARN, 1 any FAIL, 2 nothing testable.
 """
 import argparse
 import concurrent.futures
 import json
 import os
+import re
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from search import ENGINES, available_engines  # noqa: E402
 
+# Failures that say "the network/engine is having a bad day", not "your
+# install is broken". Demoted to WARN unless --strict is passed.
+TRANSIENT = re.compile(
+    r"anti-bot|security verification|captcha|challenge|anomaly|blocked"
+    r"|rate limit|too many requests|\b429\b|\btimeout\b|no results parsed"
+    r"|HTTP 202|HTTP 403|HTTP 5\d\d",
+    re.IGNORECASE,
+)
+
 
 def main() -> None:
     p = argparse.ArgumentParser(description="easy-websearch doctor")
     p.add_argument("--timeout", type=int, default=8)
     p.add_argument("--json", action="store_true")
+    p.add_argument("--strict", action="store_true",
+                   help="treat transient failures (anti-bot / rate limit / timeout) as failures")
     p.add_argument("--clear-cooldown", action="store_true",
                    help="reset the failure-cooldown state and exit")
     args = p.parse_args()
@@ -116,7 +135,12 @@ def main() -> None:
     rows.sort(key=lambda r: list(ENGINES).index(r["engine"]))
 
     tested = [r for r in rows if r["status"] != "SKIP"]
+    if not args.strict:
+        for r in rows:
+            if r["status"] == "FAIL" and TRANSIENT.search(r["note"]):
+                r["status"] = "WARN"
     failed = [r for r in rows if r["status"] == "FAIL"]
+    warned = [r for r in rows if r["status"] == "WARN"]
     proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or \
         os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or ""
     scrape_failed = [r for r in failed if r["engine"] in ("ddg", "bing", "baidu", "sogouweb", "so360", "sogouweixin")]
@@ -135,17 +159,25 @@ def main() -> None:
             "cooldown_state_file": _cooldown_path(),
             "hints": proxy_hint,
             "engines": rows,
+            "strict": args.strict,
             "summary": {"tested": len(tested), "failed": len(failed),
+                        "warned": len(warned),
                         "skipped": len(rows) - len(tested)},
         }, ensure_ascii=False, indent=2))
     else:
         print(f"easy-websearch doctor — python {sys.version.split()[0]}"
-              f"{' | proxy: ' + proxy if proxy else ' | no proxy env'}")
+              f"{' | proxy: ' + proxy if proxy else ' | no proxy env'}"
+              f"{' | strict' if args.strict else ''}")
         w = max(len(r["engine"]) for r in rows) + 2
+        marks = {"OK": "✓", "FAIL": "✗", "WARN": "⚠", "SKIP": "–"}
         for r in rows:
-            mark = "✓" if r["status"] == "OK" else "✗" if r["status"] == "FAIL" else "–"
+            mark = marks.get(r["status"], "–")
             print(f"  {mark} {r['engine']:<{w}} {r['status']:<5} {r['ms']:>5}ms  {r['note']}")
-        print(f"\n{len(tested)} tested, {len(rows) - len(tested)} skipped, {len(failed)} failed")
+        print(f"\n{len(tested)} tested, {len(rows) - len(tested)} skipped, "
+              f"{len(failed)} failed, {len(warned)} warned")
+        if warned and not args.strict:
+            print("⚠ = transient (anti-bot / rate limit / timeout) — expected on public engines, not an install problem")
+            print("  run with --strict to treat these as failures")
         for line in proxy_hint:
             print(line)
 

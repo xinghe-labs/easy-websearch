@@ -4,11 +4,18 @@
  * Zero npm dependencies. Node >= 18.
  *
  * Usage:
- *   node doctor.mjs [--timeout 8] [--json]
+ *   node doctor.mjs [--timeout 8] [--json] [--strict]
  *
  * Runs one tiny real search per available engine (concurrently) and reports
- * per-engine status, latency, and configuration gaps. Exit code: 0 all tested
- * engines OK, 1 any failure, 2 nothing testable.
+ * per-engine status, latency, and configuration gaps.
+ *
+ * Status: OK | SKIP (key not set) | WARN (transient: anti-bot, rate limit,
+ * timeout, unparsable response) | FAIL (real problem, e.g. bad config).
+ * By default transient failures are reported as WARN and do NOT change the
+ * exit code — public engines block datacenter exits all the time and that is
+ * not a broken install. `--strict` treats every failure as FAIL.
+ *
+ * Exit code: 0 all tested engines OK or WARN, 1 any FAIL, 2 nothing testable.
  */
 import { readFileSync } from "node:fs";
 import { ENGINES, availableEngines, cooldownPath, setForceDirect } from "./search.mjs";
@@ -20,6 +27,12 @@ const getOpt = (name, dflt) => {
 };
 const timeoutSec = parseInt(getOpt("--timeout", "8"), 10) || 8;
 const asJson = args.includes("--json");
+const strict = args.includes("--strict");
+
+// Failures that say "the network/engine is having a bad day", not "your
+// install is broken". Demoted to WARN unless --strict is passed.
+const TRANSIENT =
+  /anti-bot|security verification|captcha|challenge|anomaly|blocked|rate limit|too many requests|\b429\b|\btimeout\b|no results parsed|HTTP 202|HTTP 403|HTTP 5\d\d/i;
 if (args.includes("--direct") || process.env.EASY_WEB_SEARCH_DIRECT === "1") {
   setForceDirect(true);
 }
@@ -95,7 +108,13 @@ const rows = await Promise.all(ALL.map(async (name) => {
 }));
 
 const tested = rows.filter((r) => r.status !== "SKIP");
+if (!strict) {
+  for (const r of rows) {
+    if (r.status === "FAIL" && TRANSIENT.test(r.note)) r.status = "WARN";
+  }
+}
 const failed = rows.filter((r) => r.status === "FAIL");
+const warned = rows.filter((r) => r.status === "WARN");
 const proxy = process.env.HTTPS_PROXY || process.env.https_proxy ||
   process.env.HTTP_PROXY || process.env.http_proxy || "";
 const SCRAPE = ["ddg", "bing", "baidu", "sogouweb", "so360", "sogouweixin"];
@@ -113,16 +132,22 @@ if (asJson) {
     cooldownStateFile: cooldownPath(),
     hints: proxyHint,
     engines: rows,
-    summary: { tested: tested.length, failed: failed.length, skipped: rows.length - tested.length },
+    strict,
+    summary: { tested: tested.length, failed: failed.length, warned: warned.length,
+      skipped: rows.length - tested.length },
   }, null, 2));
 } else {
-  console.log(`easy-websearch doctor — node ${process.version}${proxy ? ` | proxy: ${proxy}` : " | no proxy env"}`);
+  console.log(`easy-websearch doctor — node ${process.version}${proxy ? ` | proxy: ${proxy}` : " | no proxy env"}${strict ? " | strict" : ""}`);
   const w = Math.max(...rows.map((r) => r.engine.length)) + 2;
   for (const r of rows) {
-    const mark = r.status === "OK" ? "✓" : r.status === "FAIL" ? "✗" : "–";
+    const mark = r.status === "OK" ? "✓" : r.status === "FAIL" ? "✗" : r.status === "WARN" ? "⚠" : "–";
     console.log(`  ${mark} ${r.engine.padEnd(w)} ${r.status.padEnd(5)} ${String(r.ms).padStart(5)}ms  ${r.note}`);
   }
-  console.log(`\n${tested.length} tested, ${rows.length - tested.length} skipped, ${failed.length} failed`);
+  console.log(`\n${tested.length} tested, ${rows.length - tested.length} skipped, ${failed.length} failed, ${warned.length} warned`);
+  if (warned.length && !strict) {
+    console.log("⚠ = transient (anti-bot / rate limit / timeout) — expected on public engines, not an install problem");
+    console.log("  run with --strict to treat these as failures");
+  }
   for (const line of proxyHint) console.log(line);
 }
 process.exit(failed.length ? 1 : tested.length ? 0 : 2);
