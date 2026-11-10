@@ -137,7 +137,7 @@ Options:
 | `--exclude-site foo.com` | exclude domain (repeatable) |
 | `--lang zh` | language/region boost: `zh` or `en` |
 | `--engine ddg,bing` | restrict/enable engines (backups `anysearch`,`keenable` need this or `EASY_WEB_SEARCH_ENGINES`) |
-| `--timeout 8` | per-engine timeout in seconds |
+| `--timeout 8` | per-**attempt** timeout in seconds; engines that rotate endpoint variants (bing, baidu, so360) can take a multiple of this before they give up |
 | `--no-cooldown` | disable the failure cooldown (by default, engines that just failed are skipped for 10 min on default runs) |
 | `--json` | machine-readable output (use this for further processing) |
 
