@@ -140,7 +140,11 @@ function proxyConnect(proxyUrl, host, port) {
     });
     req.setTimeout(DEFAULT_TIMEOUT, () => req.destroy(new Error("proxy connect timeout")));
     req.on("connect", (res, socket) => {
-      if (res.statusCode === 200) resolve(socket);
+      // unref(): the tunnel must not keep the event loop alive after the
+      // response is done. Without this, a completed search sits for up to a
+      // minute waiting on idle proxy sockets before the CLI exits (results
+      // are ready in ~2s, the process exits ~65s later).
+      if (res.statusCode === 200) { socket.unref(); resolve(socket); }
       else { socket.destroy(); reject(new Error(`proxy CONNECT ${res.statusCode}`)); }
     });
     req.on("error", reject);

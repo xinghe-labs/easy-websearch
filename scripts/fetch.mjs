@@ -45,7 +45,9 @@ function proxyConnect(proxyUrl, host, port) {
     });
     req.setTimeout(DEFAULT_TIMEOUT, () => req.destroy(new Error("proxy connect timeout")));
     req.on("connect", (res, socket) => {
-      if (res.statusCode === 200) resolve(socket);
+      // unref(): see search.mjs — an idle tunnel must not hold the event loop
+      // open after the fetch has finished.
+      if (res.statusCode === 200) { socket.unref(); resolve(socket); }
       else { socket.destroy(); reject(new Error(`proxy CONNECT ${res.statusCode}`)); }
     });
     req.on("error", reject);
@@ -53,7 +55,7 @@ function proxyConnect(proxyUrl, host, port) {
   });
 }
 
-function fetchText(url, { headers = {}, timeout = DEFAULT_TIMEOUT } = {}) {
+function fetchText(url, { headers = {}, timeout = DEFAULT_TIMEOUT } = {}, depth = 0) {
   let u;
   try { u = new URL(url); } catch { return Promise.reject(new Error(`invalid URL: ${url}`)); }
   const isHttps = u.protocol === "https:";
@@ -67,10 +69,16 @@ function fetchText(url, { headers = {}, timeout = DEFAULT_TIMEOUT } = {}) {
     const opts = { method: "GET", headers: { "user-agent": UA, "accept-language": "zh-CN,zh;q=0.9,en;q=0.8", ...headers } };
     const handler = (res) => {
       // Follow up to 5 redirects ourselves (keeps the proxy tunnel intact).
+      // The counter is what actually bounds the chain — without it a redirect
+      // loop recurses until the stack/timeout dies.
       if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
         res.resume();
+        if (depth >= 5) {
+          finish(reject, new Error(`too many redirects (>5) at ${url}`));
+          return;
+        }
         const next = new URL(res.headers.location, url).toString();
-        fetchText(next, { headers, timeout }).then((v) => finish(resolve, v), (e) => finish(reject, e));
+        fetchText(next, { headers, timeout }, depth + 1).then((v) => finish(resolve, v), (e) => finish(reject, e));
         return;
       }
       const chunks = [];
