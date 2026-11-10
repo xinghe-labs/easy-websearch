@@ -127,7 +127,7 @@ function cookieHeader(host) {
 // ------------------------------------------------------------- fetch ----
 // Node's fetch() ignores HTTP(S)_PROXY; many users (esp. behind the GFW)
 // need it. Implement a minimal CONNECT tunnel ourselves. Zero-dep.
-function proxyConnect(proxyUrl, host, port) {
+function proxyConnect(proxyUrl, host, port, timeout = DEFAULT_TIMEOUT) {
   return new Promise((resolve, reject) => {
     let pu;
     try { pu = new URL(proxyUrl); } catch { return reject(new Error(`invalid proxy URL: ${proxyUrl}`)); }
@@ -138,7 +138,7 @@ function proxyConnect(proxyUrl, host, port) {
       path: `${host}:${port}`,
       headers: { host: `${host}:${port}` },
     });
-    req.setTimeout(DEFAULT_TIMEOUT, () => req.destroy(new Error("proxy connect timeout")));
+    req.setTimeout(timeout, () => req.destroy(new Error("proxy connect timeout")));
     req.on("connect", (res, socket) => {
       // unref(): the tunnel must not keep the event loop alive after the
       // response is done. Without this, a completed search sits for up to a
@@ -164,8 +164,23 @@ function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_
     process.env.HTTP_PROXY || process.env.http_proxy || "";
   const mod = isHttps ? https : http;
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("timeout")), timeout);
-    const finish = (fn, val) => { clearTimeout(timer); fn(val); };
+    // Transport handles that must be torn down on timeout. A bare reject()
+    // leaves them pending and the process alive — measured >30s hang when the
+    // proxy accepts the TCP connection but never answers CONNECT.
+    let activeSocket = null;
+    let activeReq = null;
+    let settled = false;
+    const finish = (fn, val) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(val);
+    };
+    const timer = setTimeout(() => {
+      try { activeReq?.destroy(); } catch { /* already gone */ }
+      try { activeSocket?.destroy(); } catch { /* already gone */ }
+      finish(reject, new Error("timeout"));
+    }, timeout);
     const outgoing = { ...headers };
     const jarCookie = cookieHeader(u.hostname);
     if (jarCookie && !outgoing.cookie) outgoing.cookie = jarCookie;
@@ -180,17 +195,22 @@ function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_
     };
     if (proxy && isHttps && !FORCE_DIRECT) {
       // Socket is tunneled; request must address the target via the socket.
-      proxyConnect(proxy, u.hostname, u.port || 443).then((socket) => {
+      proxyConnect(proxy, u.hostname, u.port || 443, timeout).then((socket) => {
+        if (settled) { socket.destroy(); return; } // timed out while connecting
+        activeSocket = socket;
         const req = mod.request(
           { ...opts, socket, servername: u.hostname, host: u.hostname, port: u.port || 443, path: u.pathname + u.search },
           handler
         );
+        activeReq = req;
+        req.setTimeout(timeout, () => req.destroy(new Error("timeout")));
         req.on("error", (e) => finish(reject, e));
         if (body) req.write(body);
         req.end();
       }, (e) => finish(reject, e));
     } else {
       const req = mod.request(url, opts, handler);
+      activeReq = req;
       req.setTimeout(timeout, () => req.destroy(new Error("timeout")));
       req.on("error", (e) => finish(reject, e));
       if (body) req.write(body);

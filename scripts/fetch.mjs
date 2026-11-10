@@ -35,7 +35,7 @@ if (!url) {
 }
 
 // ------------------------------------------------------------- fetch ----
-function proxyConnect(proxyUrl, host, port) {
+function proxyConnect(proxyUrl, host, port, timeout = DEFAULT_TIMEOUT) {
   return new Promise((resolve, reject) => {
     let pu;
     try { pu = new URL(proxyUrl); } catch { return reject(new Error(`invalid proxy URL: ${proxyUrl}`)); }
@@ -43,7 +43,7 @@ function proxyConnect(proxyUrl, host, port) {
       host: pu.hostname, port: parseInt(pu.port, 10) || 80, method: "CONNECT",
       path: `${host}:${port}`, headers: { host: `${host}:${port}` },
     });
-    req.setTimeout(DEFAULT_TIMEOUT, () => req.destroy(new Error("proxy connect timeout")));
+    req.setTimeout(timeout, () => req.destroy(new Error("proxy connect timeout")));
     req.on("connect", (res, socket) => {
       // unref(): see search.mjs — an idle tunnel must not hold the event loop
       // open after the fetch has finished.
@@ -64,8 +64,22 @@ function fetchText(url, { headers = {}, timeout = DEFAULT_TIMEOUT } = {}, depth 
     process.env.HTTP_PROXY || process.env.http_proxy || "";
   const mod = isHttps ? https : http;
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("timeout")), timeout);
-    const finish = (fn, val) => { clearTimeout(timer); fn(val); };
+    // Torn down on timeout — see search.mjs: a bare reject() leaves the
+    // transport pending and the process alive.
+    let activeSocket = null;
+    let activeReq = null;
+    let settled = false;
+    const finish = (fn, val) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(val);
+    };
+    const timer = setTimeout(() => {
+      try { activeReq?.destroy(); } catch { /* already gone */ }
+      try { activeSocket?.destroy(); } catch { /* already gone */ }
+      finish(reject, new Error("timeout"));
+    }, timeout);
     const opts = { method: "GET", headers: { "user-agent": UA, "accept-language": "zh-CN,zh;q=0.9,en;q=0.8", ...headers } };
     const handler = (res) => {
       // Follow up to 5 redirects ourselves (keeps the proxy tunnel intact).
@@ -86,13 +100,18 @@ function fetchText(url, { headers = {}, timeout = DEFAULT_TIMEOUT } = {}, depth 
       res.on("end", () => finish(resolve, { status: res.statusCode, body: Buffer.concat(chunks).toString("utf8"), finalUrl: url }));
     };
     if (proxy && isHttps) {
-      proxyConnect(proxy, u.hostname, u.port || 443).then((socket) => {
+      proxyConnect(proxy, u.hostname, u.port || 443, timeout).then((socket) => {
+        if (settled) { socket.destroy(); return; } // timed out while connecting
+        activeSocket = socket;
         const req = mod.request({ ...opts, socket, servername: u.hostname, host: u.hostname, port: u.port || 443, path: u.pathname + u.search }, handler);
+        activeReq = req;
+        req.setTimeout(timeout, () => req.destroy(new Error("timeout")));
         req.on("error", (e) => finish(reject, e));
         req.end();
       }, (e) => finish(reject, e));
     } else {
       const req = mod.request(url, opts, handler);
+      activeReq = req;
       req.setTimeout(timeout, () => req.destroy(new Error("timeout")));
       req.on("error", (e) => finish(reject, e));
       req.end();
