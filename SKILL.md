@@ -24,21 +24,62 @@ description: |
 Multi-engine web search + page reader as a self-contained script tool.
 Free without API keys; better with them.
 
+This file is an **execution contract for the agent**: you run the scripts on
+the user's behalf during a conversation and turn their output into an answer.
+Three ground rules:
+
+1. **You are the operator.** When the user says "look up X", run the script
+   yourself. Never tell them to type commands.
+2. **You are the translator.** stdout/stderr is raw material. Never paste it
+   at the user.
+3. **You are the record keeper.** Cite only URLs that actually appeared in
+   tool output. Report failures honestly — no smoothing over.
+
 ## When to use
 
 - Any request needing current web information: news, facts, docs, prices, research
-- Chinese-language queries (region-tuned DuckDuckGo `cn-zh` + Bing `zh-CN` + Google via Serper)
+- Chinese-language queries (region-tuned DuckDuckGo `cn-zh` + Bing `zh-CN` + baidu + Google via Serper)
 - Reading a specific URL's content as clean Markdown
 - Situations where built-in search is unavailable, rate-limited, or blocked
+- Broad research questions ("research X", "compare A vs B") — use the
+  `research` evidence collector below
+
+Choosing between this skill and a built-in web tool:
+
+| Situation | Choice |
+|---|---|
+| Needs Chinese sources (CSDN/知乎/juejin/WeChat) | **this skill**, `--lang zh` |
+| Needs cross-source verification / "which engines agree" | **this skill** (RRF fusion + per-hit engine attribution) |
+| Built-in search failed, was rate-limited, or returned empty | **this skill** |
+| Read a specific URL as clean Markdown | **this skill**'s `fetch` |
+| Diagnose "why do searches return nothing" | **this skill**'s `doctor` |
+| One-line fact, built-in tool works fine | built-in tool; don't add overhead |
+| Login-gated, paywalled, or interactive pages | neither; tell the user it's not retrievable |
+
+If the user explicitly names easy-websearch, always use it.
 
 ## Setup
 
-Locate this skill's directory, then pick a runtime (both scripts are
-zero-dependency twins — prefer `node`, fall back to `python3`):
+Resolve the script directory first — do not guess a path:
+
+```bash
+SKILL_DIR=$(for d in ./easy-websearch ../easy-websearch \
+    "$HOME/.agents/skills/easy-websearch" \
+    "$HOME/.claude/skills/easy-websearch"; do
+  [ -f "$d/scripts/search.mjs" ] && { echo "$d"; break; }
+done)
+[ -n "$SKILL_DIR" ] || echo SKILL_NOT_FOUND
+```
+
+Then pick a runtime (both scripts are zero-dependency twins — prefer `node`,
+fall back to `python3`):
 
 ```bash
 command -v node && echo NODE_OK || command -v python3 && echo PY_OK
 ```
+
+`SKILL_NOT_FOUND`, or no runtime at all → **stop and tell the user**. Never
+invent search results.
 
 Optional upgrades (all optional; detected automatically, never required):
 
@@ -59,6 +100,7 @@ export SEARXNG_BASE_URL=...   # self-hosted SearXNG (enable JSON in settings.yml
 export ANYSEARCH_API_KEY=...  # optional; anonymous works with lower limits
 export KEENABLE_API_KEY=...   # optional; anonymous works with lower limits
 export S2_API_KEY=...         # optional; https://www.semanticscholar.org/product/api (lifts 429s)
+```
 
 Keyless backup engines (anysearch, keenable, sogouweixin) are OFF by default.
 opt in per-run with `--engine sogouweixin` (WeChat articles — great for
@@ -67,7 +109,10 @@ Chinese tech content) or for the session with
 
 Chinese queries get baidu in the default pool (no key) — plus bocha/metaso
 when configured.
-```
+
+Show any `*_API_KEY` as first/last 4 chars only (e.g. `sk-…a1b2`); never echo
+a key into a command line, log, or file; never spend paid quota just to
+"verify a key works".
 
 If the user's environment has an HTTP(S)_PROXY set, both runtimes honor it
 automatically (Node via a built-in CONNECT tunnel; Python via urllib).
@@ -100,7 +145,44 @@ Prefer `--json` and parse the output; it includes per-engine status
 (`{name, ok, count, ms, error}`) so you can tell the user exactly what
 happened. Text mode prints results with `[engines]` attribution per hit.
 
-Interpreting results:
+Exit codes — branch on these, don't parse prose:
+
+| Command | Code | Meaning |
+|---|---|---|
+| search | 0 | normal (with `--json` this is 0 even for 0 results — check `results.length`) |
+| search | 1 | text mode: no results from any engine |
+| search | 2 | bad usage / no usable engine |
+| fetch | 0 | `--json` always exits 0; read the `ok` field |
+| fetch | 1 | text mode fetch failed; 2 = missing URL |
+| doctor | 0 / 1 / 2 | all healthy / any failure / nothing testable |
+
+## Presenting results
+
+Do not dump stdout or JSON at the user. Answer in this shape:
+
+```markdown
+<one-sentence answer>
+
+- Point 1 — [source title](url) (confirmed by: ddg+bing)
+- Point 2 — [source title](url) (single source)
+- Point 3 — [source title](url)
+
+> Engine note: ddg was rate-limited (HTTP 202) this run; findings lean on bing.
+```
+
+- **Answer first**, at most 5 bullets; details after, on request.
+- Every load-bearing claim gets an **inline link** from this run's output.
+- Label evidence strength: `confirmed` (≥2 engines, or ≥2 independent
+  domains) / `single source` / `conflicting` (say so explicitly — never pick
+  one side and hide the other).
+- A URL returned by several engines in `engines` is stronger — prefer it.
+- **Only mention engine status when something failed or was skipped by
+  cooldown.** All-green runs need no commentary.
+- "Latest / today" questions → pass `--days` and state the window.
+- Very long content → write a file and give the path; don't pour 20k
+  characters into the chat.
+
+## Interpreting results
 
 - `engines` per hit lists which engines returned that URL — hits found by
   2+ engines rank higher (Reciprocal Rank Fusion) and are usually stronger sources.
@@ -113,6 +195,14 @@ Interpreting results:
   `$XDG_CACHE_HOME/easy-websearch/cooldowns.json`). Reset with
   `node scripts/doctor.mjs --clear-cooldown`; override with `--engine <name>`
   or `--no-cooldown` when the user asks to retry.
+- Engines OK but 0 results → narrow / rephrase / add `--site`; **at most 2
+  more attempts**, then say plainly that nothing was found.
+- Two consecutive anomalies → run `doctor` once and report which engine is
+  down, which key is missing, whether the proxy is detected. Don't keep
+  re-rolling keywords.
+
+Forbidden: silent retries, describing a failure as "no relevant
+information", filling gaps from memory.
 
 ## Research (multi-round evidence collector)
 
@@ -131,6 +221,12 @@ the answer with inline citations.
 
 Options: `--queries "q1,q2,q3"` (agent-provided sub-queries, best quality),
 `--depth 2` (pages per sub-query), `--max-searches 8`, `--max-fetches 12`.
+
+Budget: one research task stays at **≤ 8 searches and ≤ 12 fetches** — the
+`research` defaults already match. `fetch` starts at `--max-chars 4000` and
+goes to 12000-20000 only when detail is genuinely needed; never leave it
+unbounded. **Stop at saturation**: once sub-questions return the same URL
+set, more queries add noise, not information.
 
 ## Health check (doctor)
 
@@ -172,5 +268,8 @@ For broad research requests ("research X", "compare options", "latest developmen
 ## Anti-patterns
 
 - Don't invent results — only cite URLs that actually appeared in tool output.
+- Don't paste raw JSON or CLI formatting at the user.
 - Don't run more than ~8 searches for one question; narrow the query instead.
+- Don't paste fetched page text wholesale into the conversation.
 - Don't pipe secrets into these scripts; they only need the optional env keys.
+- Don't declare "search is unavailable" when only some engines failed.
