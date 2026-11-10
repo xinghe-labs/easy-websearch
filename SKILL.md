@@ -145,6 +145,22 @@ Prefer `--json` and parse the output; it includes per-engine status
 (`{name, ok, count, ms, error}`) so you can tell the user exactly what
 happened. Text mode prints results with `[engines]` attribution per hit.
 
+The **default pool is 16 engines**, queried concurrently on every call:
+`ddg bing baidu sogouweb so360 searxng wikipedia hn juejin arxiv mwmbl csdn
+openalex crossref pubmed huggingface`. That breadth is why fusion is good and
+why a call costs a few seconds.
+
+Two speeds, pick deliberately:
+
+| Need | Call | Typical wall time |
+|---|---|---|
+| quick single fact, one URL to read | `--engine ddg,bing` | ~1-2s |
+| Chinese sources, cross-engine confirmation, research | full default pool | ~3-4s |
+
+`--engine` **replaces** the default set (it does not add to it), so name every
+engine you want. Backups (`anysearch`, `keenable`, `sogouweixin`) only run
+when named or enabled via `EASY_WEB_SEARCH_ENGINES`.
+
 Exit codes — branch on these, don't parse prose:
 
 | Command | Code | Meaning |
@@ -154,7 +170,7 @@ Exit codes — branch on these, don't parse prose:
 | search | 2 | bad usage / no usable engine |
 | fetch | 0 | `--json` always exits 0; read the `ok` field |
 | fetch | 1 | text mode fetch failed; 2 = missing URL |
-| doctor | 0 / 1 / 2 | all healthy / any failure / nothing testable |
+| doctor | 0 / 1 / 2 | all OK or WARN / any FAIL / nothing testable |
 
 ## Presenting results
 
@@ -200,6 +216,14 @@ Do not dump stdout or JSON at the user. Answer in this shape:
 - Two consecutive anomalies → run `doctor` once and report which engine is
   down, which key is missing, whether the proxy is detected. Don't keep
   re-rolling keywords.
+- `doctor` prints four statuses: `OK`, `SKIP` (key not configured), `WARN`
+  (transient: anti-bot, rate limit, timeout, unparsable response) and `FAIL`
+  (real problem). **`WARN` is normal and does not change the exit code** —
+  public engines block datacenter IPs constantly. Never report WARN rows as
+  "the search environment is broken"; mention them only if they explain a
+  thin result set.
+- `[not in default set]` in a doctor row means the engine is healthy but not
+  part of the default pool — not a failure.
 
 Forbidden: silent retries, describing a failure as "no relevant
 information", filling gaps from memory.
@@ -222,6 +246,37 @@ the answer with inline citations.
 Options: `--queries "q1,q2,q3"` (agent-provided sub-queries, best quality),
 `--depth 2` (pages per sub-query), `--max-searches 8`, `--max-fetches 12`.
 
+**research vs. hand-rolled sub-queries** — pick one, don't do both:
+
+| Situation | Choice |
+|---|---|
+| Question is broad but mechanical ("compare A vs B", "state of X") and you can name 3-6 angles yourself | `research` with `--queries` (you control the angles, it handles fan-out and fetching) |
+| You need to see intermediate results to decide the next query (iterative narrowing) | plain `search` loop |
+| One specific claim to verify against a specific page | `search --engine ddg,bing` + `fetch` |
+| Chinese-only sources | `search --lang zh`, not `research` (its sub-queries drift to English) |
+
+**Reading the evidence pack** (it can be large — never read it whole into a
+first-pass answer):
+
+```jsonc
+{
+  "sub_queries": ["..."],            // what was actually asked
+  "evidence": [                       // per sub-query
+    { "subQuery": "...",
+      "engines_used": ["ddg", "bing"],
+      "results": [ { "title", "url", "snippet", "engines",
+                     "fetched": true, "content_excerpt": "..." } ] }
+  ],
+  "cross_hits": [ { "url", "engines", "count" } ],  // >=2 engines agree
+  "coverage": { "bing": 4, "ddg": 3 },              // per-engine hit counts
+  "budget_used": { "searches": 6, "fetches": 9 }
+}
+```
+
+Read order: `cross_hits` first (that is your confidence ranking) → then only
+the `content_excerpt` fields you actually need → cite `url`. Treat `coverage`
+as the engine note for your answer (e.g. "ddg contributed nothing this run").
+
 Budget: one research task stays at **≤ 8 searches and ≤ 12 fetches** — the
 `research` defaults already match. `fetch` starts at `--max-chars 4000` and
 goes to 12000-20000 only when detail is genuinely needed; never leave it
@@ -237,8 +292,14 @@ node scripts/doctor.mjs            # table: status, latency, config gaps per eng
 python3 scripts/doctor.py --json   # machine-readable
 ```
 
-Runs one tiny real search per engine (concurrently). SKIP means the engine's
-key is not configured. Exit code: 0 healthy, 1 any failure, 2 nothing testable.
+Runs one tiny real search per engine (concurrently). Four statuses:
+`OK`; `SKIP` (key not configured); `WARN` (transient — anti-bot, rate limit,
+timeout, unparsable response); `FAIL` (real problem, e.g. misconfiguration).
+
+Exit code: **0 all OK or WARN**, 1 any FAIL, 2 nothing testable. Transient
+warnings are expected on public engines and must not be reported to the user
+as a broken install. `--strict` promotes every failure to FAIL — use it in CI
+or when the user explicitly asks "is everything really working?".
 
 ## Fetch page content
 
