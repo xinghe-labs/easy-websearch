@@ -14,8 +14,8 @@
 > [Agent Skills](https://agentskills.io) 标准技能。
 
 **零配置**：不配任何 API key 也能用（DuckDuckGo + Bing + 百度基线）。
-**配 key 更强**：11 个可选 key（Brave、Tavily、Serper、Exa、Firecrawl、博查、
-秘塔、Linkup、Ollama、AnySearch、Keenable —— 见下方
+**配 key 更强**：13 个可选 key（Brave、Tavily、Serper、Exa、Firecrawl、博查、
+秘塔、Linkup、Ollama、Google CSE、Gitee、AnySearch、Keenable —— 见下方
 [引擎 key 表](#引擎-key全部可选))配好后对应引擎自动加入。失败的引擎会
 进入 10 分钟冷却期，单个坏引擎不会拖垮整个请求。
 
@@ -118,12 +118,19 @@ easy-websearch doctor
 | 2 | **Tavily** | LLM 友好摘要 | 1,000 次/月 | [app.tavily.com](https://app.tavily.com/) | `TAVILY_API_KEY` |
 | 3 | **Ollama** | 多一个稳定源 | 免费账号 | [ollama.com](https://ollama.com/) → Account → API keys | `OLLAMA_API_KEY` |
 | 4 | **博查 Bocha** | 最强中文网页搜索 | 新客额度（付费） | [open.bochaai.com](https://open.bochaai.com/) | `BOCHA_API_KEY` |
-| 5 | **Serper** | Google 结果 | 试用额度 | [serper.dev](https://serper.dev/) | `SERPER_API_KEY` |
-| 6 | **Exa** | 语义搜索 | 试用额度 | [dashboard.exa.ai](https://dashboard.exa.ai/) | `EXA_API_KEY` |
-| 7 | **Firecrawl** | 搜索 + fetch 抓取升级 | 试用额度 | [firecrawl.dev](https://firecrawl.dev/) | `FIRECRAWL_API_KEY` |
+| 5 | **Serper** | Google 结果 | 2,500 次一次性 | [serper.dev](https://serper.dev/) | `SERPER_API_KEY` |
+| 6 | **Exa** | 语义搜索 | $10 积分/月 | [dashboard.exa.ai](https://dashboard.exa.ai/) | `EXA_API_KEY` |
+| 7 | **Firecrawl** | 搜索 + fetch 抓取升级 | 1,000/月 | [firecrawl.dev](https://firecrawl.dev/) | `FIRECRAWL_API_KEY` |
 | 8 | **秘塔 Metaso** | 中文 AI 搜索 | 新客额度（付费） | [metaso.cn/search-api/api-keys](https://metaso.cn/search-api/api-keys) | `METASO_API_KEY` |
 | 9 | **Linkup** | 带引用的回答 | 免费额度 | [linkup.so](https://linkup.so/) | `LINKUP_API_KEY` |
+| 10 | **Google CSE** | 官方 Google 结果（配 key） | 100 次/天 | [programmablesearchengine.google.com](https://programmablesearchengine.google.com/) + [console.cloud.google.com](https://console.cloud.google.com/) | `GOOGLE_API_KEY` + `GOOGLE_CX` |
+| 11 | **Gitee** | CN 代码搜索（需 token） | 免费 token | [gitee.com/profile/personal_access_tokens](https://gitee.com/profile/personal_access_tokens) | `GITEE_TOKEN` |
 | — | AnySearch / Keenable | 免 key 备援（需 opt-in） | 匿名可用 | [anysearch.com](https://anysearch.com/) / [keenable.ai](https://keenable.ai/) | `ANYSEARCH_API_KEY` / `KEENABLE_API_KEY` |
+
+免 key 垂直引擎按查询意图自动加入（无需配置）：Wikipedia / HN / 掘金 /
+CSDN / arXiv / OpenAlex / Crossref / PubMed / Mwmbl / HuggingFace /
+Semantic Scholar（学术——匿名常限流，免费 `S2_API_KEY` 可解除）/ Bing News
+（新闻类查询）/ GitHub、Gitee（源码类查询，Gitee 需 token）。
 
 key 放进 agent 的环境变量（如 Claude Code 的 `~/.claude/settings.json`）：
 

@@ -1122,6 +1122,108 @@ async function engineHuggingFace(ctx) {
   }));
 }
 
+// ── Owner-requested expansion (v1.9, probe evidence in engine-notes) ──
+
+// Google Custom Search JSON API — free 100 queries/day, official Google
+// results. Needs BOTH GOOGLE_API_KEY and a Programmable Search Engine cx.
+async function engineGoogleCse(ctx) {
+  const cx = process.env.GOOGLE_CX;
+  if (!cx) throw new Error("GOOGLE_CX not set — create a search engine at programmablesearchengine.google.com and put its id in GOOGLE_CX");
+  const p = new URLSearchParams({ key: process.env.GOOGLE_API_KEY, cx, q: ctx.query, num: String(Math.min(Math.max(ctx.n, 1), 10)) });
+  if (ctx.lang === "zh") p.set("hl", "zh-CN");
+  else if (ctx.lang === "en") p.set("hl", "en");
+  const { status, body } = await fetchText(`https://www.googleapis.com/customsearch/v1?${p}`, {
+    timeout: ctx.timeout, headers: { accept: "application/json" },
+  });
+  if (status !== 200) {
+    let msg = "";
+    try { msg = ": " + String(parseJson(body)?.error?.message || "").slice(0, 100); } catch { /* keep empty */ }
+    throw new Error(`HTTP ${status}${msg}`);
+  }
+  const items = parseJson(body)?.items || [];
+  return items
+    .filter((r) => r.link && r.title)
+    .map((r) => ({ title: r.title, url: r.link, snippet: (r.snippet || "").slice(0, 400) }));
+}
+
+// Semantic Scholar Graph API — free, keyless (shared per-IP anonymous pool,
+// often 429 from proxy/datacenter exits); a free S2_API_KEY lifts the limit.
+async function engineSemanticScholar(ctx) {
+  const p = new URLSearchParams({
+    query: ctx.query, limit: String(Math.min(ctx.n, 10)),
+    fields: "title,url,year,venue,citationCount",
+  });
+  const headers = { accept: "application/json", ...(process.env.S2_API_KEY && { "x-api-key": process.env.S2_API_KEY }) };
+  const { status, body } = await fetchText(`https://api.semanticscholar.org/graph/v1/paper/search?${p}`, {
+    timeout: ctx.timeout, headers,
+  });
+  if (status === 429) throw new Error("Semantic Scholar rate limit (shared anonymous pool) — retry later or set S2_API_KEY (free)");
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const items = parseJson(body)?.data || [];
+  return items
+    .filter((r) => r.url && r.title)
+    .map((r) => ({
+      title: r.title,
+      url: r.url,
+      snippet: [r.year, r.venue, r.citationCount != null ? `${r.citationCount} citations` : ""].filter(Boolean).join(" · "),
+    }));
+}
+
+// Bing News RSS — keyless, CN-reachable. Item links are apiclick.aspx
+// wrappers carrying the real target in the url= param (observed 2026-11-09);
+// News:Source carries the publisher.
+function parseBingNewsRss(ctx, body) {
+  const results = [];
+  const itemRe = /<item>([\s\S]*?)<\/item>/g;
+  for (const m of body.matchAll(itemRe)) {
+    if (results.length >= ctx.n * 2) break;
+    const item = m[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1");
+    const title = stripTags((item.match(/<title>([\s\S]*?)<\/title>/) || [])[1] || "");
+    const link = decodeEntities((item.match(/<link>([\s\S]*?)<\/link>/) || [])[1] || "");
+    // url= is the last param and carries the raw target — take the rest greedily.
+    const up = link.match(/[?&]url=(.+)$/);
+    const url = up ? decodeURIComponent(up[1]) : link;
+    const source = stripTags((item.match(/<News:Source>([\s\S]*?)<\/News:Source>/) || [])[1] || "");
+    const date = stripTags((item.match(/<pubDate>([\s\S]*?)<\/pubDate>/) || [])[1] || "");
+    if (!/^https?:\/\//.test(url) || !title) continue;
+    results.push({ title, url, snippet: [source, date].filter(Boolean).join(" · ") });
+  }
+  if (results.length === 0) throw new Error("no results parsed");
+  return results;
+}
+
+async function engineBingNews(ctx) {
+  const p = new URLSearchParams({ q: ctx.query, format: "rss" });
+  if (ctx.lang === "zh") p.set("setmkt", "zh-CN");
+  else if (ctx.lang === "en") p.set("setmkt", "en-US");
+  const { status, body } = await fetchText(`https://www.bing.com/news/search?${p}`, {
+    timeout: ctx.timeout,
+    headers: { referer: "https://www.bing.com/", "upgrade-insecure-requests": "1" },
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  return parseBingNewsRss(ctx, body);
+}
+
+// Gitee API v5 — anonymous search returns EMPTY arrays (observed 2026-11-09),
+// so this engine is gated on a free GITEE_TOKEN. Routed only when the token
+// exists (see routeAuto) to keep token-less runs noise-free.
+async function engineGitee(ctx) {
+  const p = new URLSearchParams({ q: ctx.query, per_page: String(Math.min(ctx.n, 10)) });
+  p.set("access_token", process.env.GITEE_TOKEN);
+  const { status, body } = await fetchText(`https://gitee.com/api/v5/search/repositories?${p}`, {
+    timeout: ctx.timeout, headers: { accept: "application/json" },
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const items = parseJson(body) || [];
+  return items
+    .filter((r) => r.html_url && (r.full_name || r.human_name))
+    .map((r) => ({
+      title: `${r.human_name || r.full_name} ⭐${r.stargazers_count ?? 0}`,
+      url: r.html_url,
+      snippet: (r.description || "").slice(0, 300),
+    }));
+}
+
 async function engineSearxng(ctx) {
   if (!process.env.SEARXNG_BASE_URL) {
     throw new Error("SEARXNG_BASE_URL not set — see README SearXNG section");
@@ -1165,6 +1267,9 @@ const ENGINES = {
   wikipedia: { fn: engineWikipedia, key: null },
   stackexchange: { fn: engineStackExchange, key: null, auto: true },
   github: { fn: engineGithub, key: null, auto: true },
+  bingnews: { fn: engineBingNews, key: null, auto: true },
+  semanticscholar: { fn: engineSemanticScholar, key: "S2_API_KEY", optionalKey: true, auto: true },
+  gitee: { fn: engineGitee, key: "GITEE_TOKEN", auto: true },
   hn: { fn: engineHn, key: null },
   juejin: { fn: engineJuejin, key: null },
   arxiv: { fn: engineArxiv, key: null },
@@ -1174,6 +1279,7 @@ const ENGINES = {
   openalex: { fn: engineOpenAlex, key: null },
   crossref: { fn: engineCrossref, key: null },
   pubmed: { fn: enginePubMed, key: null },
+  googlecse: { fn: engineGoogleCse, key: "GOOGLE_API_KEY" },
   huggingface: { fn: engineHuggingFace, key: null },
   // Keyless backup engines: anonymous quotas are low, so they stay OFF by
   // default. Opt in via --engine or the EASY_WEB_SEARCH_ENGINES env var.
@@ -1198,9 +1304,14 @@ function extractIntlQuery(query) {
 function routeAuto(query) {
   const add = [];
   const q = query.toLowerCase();
-  if (/(github|gitee|开源仓库|源码|repo\b|open[- ]?source)/.test(q)) add.push("github");
+  if (/(github|gitee|开源仓库|源码|repo\b|open[- ]?source)/.test(q)) {
+    add.push("github");
+    // Gitee anonymous search is empty (engine-notes v1.9) — only route when tokened.
+    if (process.env.GITEE_TOKEN) add.push("gitee");
+  }
   if (/(stackoverflow|stack\s?exchange|报错|exception|traceback|怎么解决|how to (fix|debug))/.test(q)) add.push("stackexchange");
-  if (/(论文|文献|arxiv|学术|research paper|preprint)/.test(q)) add.push("arxiv", "openalex", "crossref", "pubmed");
+  if (/(论文|文献|arxiv|学术|research paper|preprint)/.test(q)) add.push("arxiv", "openalex", "crossref", "pubmed", "semanticscholar");
+  if (/(新闻|快讯|资讯|breaking news|latest news)/.test(q)) add.push("bingnews");
   if (/(什么是|百科|维基百科|wikipedia|是谁|who is|history of)/.test(q)) add.push("wikipedia");
   if (/(hacker\s?news|show\s?hn|tech news|科技新闻)/.test(q)) add.push("hn");
   if (/(掘金|juejin|csdn|前端开发|javascript 教程|vue\b|react\b)/.test(q)) add.push("juejin", "csdn");
@@ -1395,4 +1506,4 @@ if (isMain) await main();
 
 export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk, cooldownPath, searxngBaseAndAuth, setForceDirect, routeAuto, extractIntlQuery, fetchText, stripTags, parseJson, normalizeUrl, fuse,
   // SERP parsers (tested against tests/snapshots/ in both runtimes)
-  parseDdgHtml, parseDdgLite, parseBingResults, parseBingRss, parseBaiduResults, parseSo360Desktop, parseSo360Mobile };
+  parseDdgHtml, parseDdgLite, parseBingResults, parseBingRss, parseBaiduResults, parseSo360Desktop, parseSo360Mobile, parseBingNewsRss };

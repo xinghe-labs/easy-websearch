@@ -17,10 +17,12 @@ function eq(name, got, want) {
 
 // ── routeAuto ──
 eq("routeAuto: github signal", routeAuto("github 教程").engines, ["github"]);
-eq("routeAuto: 学术四件套", routeAuto("论文 写作").engines, ["arxiv", "openalex", "crossref", "pubmed"]);
+eq("routeAuto: 学术五件套", routeAuto("论文 写作").engines, ["arxiv", "openalex", "crossref", "pubmed", "semanticscholar"]);
 eq("routeAuto: 什么是→wikipedia", routeAuto("什么是 webgpu").engines, ["wikipedia"]);
 eq("routeAuto: 掘金+csdn", routeAuto("掘金 教程").engines, ["juejin", "csdn"]);
 eq("routeAuto: huggingface", routeAuto("数据集 下载").engines, ["huggingface"]);
+eq("routeAuto: 新闻→bingnews", routeAuto("AI 最新新闻").engines, ["bingnews"]);
+eq("routeAuto: gitee 无 token 不路由", routeAuto("开源仓库 推荐").engines, ["github"]);
 eq("routeAuto: 无匹配→空", routeAuto("今天天气").engines, []);
 eq("routeAuto: 空查询→空", routeAuto("").engines, []);
 

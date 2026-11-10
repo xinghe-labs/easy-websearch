@@ -4,6 +4,21 @@ All notable changes are summarized here. Full notes per version live in
 [`.github/releases/`](.github/releases/) and on the
 [Releases page](https://github.com/xinghe-labs/easy-websearch/releases).
 
+## [1.9.0] — 2026-11-09
+
+- **Owner-requested engine expansion (unfreezes the v1.7.1 list)**: 30 → 34
+  engines. New: **Google CSE** (official Google results, free 100/day,
+  `GOOGLE_API_KEY` + `GOOGLE_CX`), **Semantic Scholar** (academic papers,
+  keyless auto-tier; free `S2_API_KEY` lifts the shared-pool 429s), **Bing
+  News** (keyless news vertical, apiclick url= unwrap), **Gitee** (CN code
+  search, requires free `GITEE_TOKEN` — anonymous API returns empty arrays)
+- Probe-rejected: m.sogou.com mobile variant (JS-resolved targets,
+  unextractable zero-dep) — engine-notes
+- Intent routing: 新闻/快讯 → Bing News; 学术 queries now also hit Semantic
+  Scholar; Gitee routes only when tokened (zero noise without keys)
+- Docs: verified free-tier table for all keyed engines (README both langs);
+  SKILL.md env guide extended
+
 ## [1.5.0] — 2026-11-07
 
 - **Thicker no-key baseline**: Baidu joins the default pool (Chinese results,

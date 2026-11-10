@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
   parseDdgHtml, parseDdgLite, parseBingResults, parseBingRss,
-  parseBaiduResults, parseSo360Desktop, parseSo360Mobile,
+  parseBaiduResults, parseSo360Desktop, parseSo360Mobile, parseBingNewsRss,
 } from "../scripts/search.mjs";
 
 const SNAP = join(dirname(fileURLToPath(import.meta.url)), "snapshots");
@@ -88,6 +88,15 @@ function throws(name, fn, msgPart) {
   eq("so360-mobile: <em> title stripped", r[0].title, "react hooks 全套教程");
   eq("so360-mobile: g-main summary snippet", r[0].snippet, "这个课程主要教大家掌握 react hooks");
   eq("so360-mobile: jump?u decoded (card 2)", r[1].url, "https://second.example.com/video/42");
+}
+// ── bing news RSS ──
+{
+  const r = parseBingNewsRss(ctx, snap("bing-news-rss.xml"));
+  eq("bing-news: count", r.length, 2);
+  eq("bing-news: url= param extracted + decoded", r[0].url, "https://www.msn.cn/zh-cn/技术/nvidia-rtx-5090");
+  eq("bing-news: CDATA title", r[0].title, "Nvidia 否认 RTX 5090 显卡停产");
+  eq("bing-news: News:Source + pubDate snippet", r[0].snippet, "快科技 on MSN · Tue, 09 Nov 2026 08:00:00 GMT");
+  eq("bing-news: plain item url", r[1].url, "https://www.investors.com/news/technology/nvidia-stock/");
 }
 // ── empty pages fail with the canonical error ──
 throws("ddg-html: empty body", () => parseDdgHtml(ctx, "<div></div>"), "no results parsed");

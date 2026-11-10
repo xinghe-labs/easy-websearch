@@ -1,0 +1,8 @@
+<!-- Trimmed real markup: Bing News RSS (www.bing.com/news/search?q=…&format=rss).
+     Captured 2026-11-09. Item <link> is an apiclick.aspx wrapper whose url=
+     param (last param) carries the raw target URL; News:Source holds the
+     publisher; titles/descriptions may be CDATA-wrapped. -->
+<rss version="2.0"><channel><title>nvidia - Bing News</title>
+<item><title><![CDATA[Nvidia 否认 RTX 5090 显卡停产]]></title><link>http://www.bing.com/news/apiclick.aspx?ref=FexRss&amp;aid=&amp;tid=6af30ed493aa41a399a249a81b804a0e&amp;url=https://www.msn.cn/zh-cn/%E6%8A%80%E6%9C%AF/nvidia-rtx-5090</link><pubDate>Tue, 09 Nov 2026 08:00:00 GMT</pubDate><description><![CDATA[快科技 on MSN: Nvidia 官方回应停产传闻。]]></description><News:Source>快科技 on MSN</News:Source></item>
+<item><title>Why Did Nvidia Stock Fall?</title><link>http://www.bing.com/news/apiclick.aspx?ref=FexRss&amp;aid=&amp;tid=6af30ed493aa41a399a249a81b804a0e&amp;url=https://www.investors.com/news/technology/nvidia-stock/</link><pubDate>Mon, 08 Nov 2026 15:30:00 GMT</pubDate><description>Board announcement coverage.</description><News:Source>Investor's Business Daily</News:Source></item>
+</channel></rss>

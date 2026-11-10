@@ -14,8 +14,9 @@ Multi-engine web search + page reader for AI coding agents — as a single
 [Agent Skills](https://agentskills.io)-compatible skill folder.
 
 **Zero-config**: works with no API key at all (DuckDuckGo + Bing baseline).
-**Better with keys**: set any of 11 optional keys (Brave, Tavily, Serper, Exa,
-Firecrawl, Bocha, Metaso, Linkup, Ollama, AnySearch, Keenable — see the
+**Better with keys**: set any of 13 optional keys (Brave, Tavily, Serper, Exa,
+Firecrawl, Bocha, Metaso, Linkup, Ollama, Google CSE, Gitee, AnySearch,
+Keenable — see the
 [engine keys table](#engine-keys-all-optional)) and those engines join the
 pool automatically. Failing engines get a 10-minute cooldown so one bad
 engine never burns the whole request.
@@ -129,12 +130,20 @@ automatically. Fastest wins first:
 | 2 | **Tavily** | LLM-friendly summaries | 1,000/mo | [app.tavily.com](https://app.tavily.com/) | `TAVILY_API_KEY` |
 | 3 | **Ollama** | one more solid source | free account | [ollama.com](https://ollama.com/) → Account → API keys | `OLLAMA_API_KEY` |
 | 4 | **Bocha 博查** | best Chinese web results | grant (paid) | [open.bochaai.com](https://open.bochaai.com/) | `BOCHA_API_KEY` |
-| 5 | **Serper** | Google results | trial | [serper.dev](https://serper.dev/) | `SERPER_API_KEY` |
-| 6 | **Exa** | semantic search | trial | [dashboard.exa.ai](https://dashboard.exa.ai/) | `EXA_API_KEY` |
-| 7 | **Firecrawl** | search + better `fetch` | trial | [firecrawl.dev](https://firecrawl.dev/) | `FIRECRAWL_API_KEY` |
+| 5 | **Serper** | Google results | 2,500 one-time | [serper.dev](https://serper.dev/) | `SERPER_API_KEY` |
+| 6 | **Exa** | semantic search | $10/mo credits | [dashboard.exa.ai](https://dashboard.exa.ai/) | `EXA_API_KEY` |
+| 7 | **Firecrawl** | search + better `fetch` | 1,000/mo | [firecrawl.dev](https://firecrawl.dev/) | `FIRECRAWL_API_KEY` |
 | 8 | **Metaso 秘塔** | Chinese AI search | grant (paid) | [metaso.cn/search-api/api-keys](https://metaso.cn/search-api/api-keys) | `METASO_API_KEY` |
 | 9 | **Linkup** | sourced answers | free tier | [linkup.so](https://linkup.so/) | `LINKUP_API_KEY` |
+| 10 | **Google CSE** | official Google results (keyed) | 100/day | [programmablesearchengine.google.com](https://programmablesearchengine.google.com/) + [console.cloud.google.com](https://console.cloud.google.com/) | `GOOGLE_API_KEY` + `GOOGLE_CX` |
+| 11 | **Gitee** | CN code search (tokened) | free token | [gitee.com/profile/personal_access_tokens](https://gitee.com/profile/personal_access_tokens) | `GITEE_TOKEN` |
 | — | AnySearch / Keenable | keyless backups (opt-in) | anonymous OK | [anysearch.com](https://anysearch.com/) / [keenable.ai](https://keenable.ai/) | `ANYSEARCH_API_KEY` / `KEENABLE_API_KEY` |
+
+Keyless vertical engines join automatically on matching queries (no keys,
+no config): Wikipedia / HN / Juejin / CSDN / arXiv / OpenAlex / Crossref /
+PubMed / Mwmbl / HuggingFace / Semantic Scholar (papers — often rate-limited
+keyless; a free `S2_API_KEY` lifts it) / Bing News (新闻类查询) / GitHub,
+Gitee (源码类查询，Gitee 需 token)。
 
 Put keys in your agent's env (e.g. Claude Code `~/.claude/settings.json`):
 

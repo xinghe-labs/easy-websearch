@@ -74,6 +74,28 @@ Probed 2026-11-07 (proxied CN network + direct):
 | Mojeek | ❌ dropped | 403 Forbidden (proxy and direct). |
 | Marginalia | ❌ dropped | API endpoint 404; HTML SERP yields ~2 external links/query — too weak. |
 
+## Owner-requested engine expansion (v1.9, 2026-11-09)
+
+Probed and added 4 engines (30 → 34); evidence below.
+
+| Engine | Tier | Contract | Probe evidence |
+|---|---|---|---|
+| Google CSE | keyed (`GOOGLE_API_KEY` + `GOOGLE_CX`) | `GET www.googleapis.com/customsearch/v1?key&cx&q&num` → `items[]{title,link,snippet}`; `num` ≤ 10; `hl` for lang | Without a key: HTTP 400 `API key not valid` (clean JSON error shape, surfaced verbatim). Free 100/day per official docs. |
+| Semantic Scholar | auto, `optional_key` (`S2_API_KEY`) | `GET api.semanticscholar.org/graph/v1/paper/search?query&limit&fields` → `data[]{title,url,year,venue,citationCount}` | Keyless probes returned **429 ×3** from this proxy exit — the anonymous pool is shared per-IP. Error message points at the free S2_API_KEY; cooldown absorbs. |
+| Bing News | auto, keyless | `GET www.bing.com/news/search?q&format=rss&setmkt` → RSS items; `<link>` is an `apiclick.aspx` wrapper with the real target in the **`url=` param (last, raw)**; `News:Source` = publisher | 200, 9 items; `url=https://www.msn.cn/…` confirmed by decoding the full wrapper link. |
+| Gitee | auto, keyed (`GITEE_TOKEN`) | `GET gitee.com/api/v5/search/repositories?q&per_page&access_token` → `[]{full_name,human_name,html_url,stargazers_count,description}` | **Anonymous search returns 200 with EMPTY arrays for every query** (vue / machine learning / rust) — effectively token-gated. Free personal access token unlocks it. Routed only when tokened. |
+
+Also probed and rejected: **m.sogou.com** mobile variant — shares the desktop
+`<h3><a>` markup but targets are relative `./id=<uuid>/keyword=…` wrappers
+resolving to a 2.2 KB WAP interstitial with no meta-refresh / location / URL
+pattern (JS-resolved client-side, unextractable zero-dep).
+
+Free-tier verification for the existing keyed engines (2026-11-09, sources in
+chat): Tavily 1,000/mo (no card) · Serper 2,500 one-time (no card) · Exa
+$10/mo (no card) · Firecrawl 1,000/mo (no card) · Linkup $20/mo credit ·
+Brave 2,000/mo (**card required**) · Bocha paid-only · Metaso API grant
+(unpublished).
+
 ## SearXNG (self-hosted, v1.5)
 
 `SEARXNG_BASE_URL` env activates the `searxng` engine (keyed-style: engine
@@ -113,6 +135,7 @@ is rethrown when all variants fail:
 | bing | `www.bing.com` → `cn.bing.com` → `global.bing.com` → `www.bing.com/search?…&format=rss` | Same `b_algo` markup on all regional hosts; junk pages are host-local, so junk on www rotates to cn. RSS is the last resort: structured XML from a different content pipeline — HTML bot-junk doesn't affect it (verified: 10 items/query, direct `<link>` URLs, no /ck/a wrappers). |
 | baidu | `www.baidu.com/s?wd=` → `m.baidu.com/s?word=` | Mobile SERP uses `word` (not `wd`); both keep `direct=True`. Mobile WAF is reportedly looser on other fingerprints — on the v1.8 probe host it also serves the verification page, so the fallback is best-effort. |
 | so360 | `www.so.com/s` → `m.so.com/s` | Desktop: `h3.res-title > a` + `res-desc`, `/link?m=` wrappers. Mobile: different card layout — URL is the closest preceding `m.so.com/jump?u=<enc>` wrapper (decode directly, no /link resolver needed), snippet in `p.g-main.summary`. WAF fingerprint asymmetry is inverted vs baidu: python-urllib passed mobile while node got captcha'd on the same day. |
+| sogou | `www.sogou.com/web` only | **m.sogou.com probed 2026-11-08, ❌ dropped**: the mobile SERP shares the desktop `<h3><a>` markup but its targets are relative `./id=<uuid>/keyword=…` wrappers that resolve to a 2.2 KB WAP interstitial with no meta-refresh / location / URL pattern and no non-sogou links — the real target is JS-resolved client-side, unextractable zero-dep. Titles are parseable but URLs would dead-end; not worth a variant. |
 
 Trade-off: a fully-blocked engine now burns up to 3-4 fetches before the
 cooldown arms (engines run in parallel, so wall-clock impact is bounded).

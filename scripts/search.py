@@ -22,6 +22,7 @@ failures never abort the run. Output reports per-engine status.
 import argparse
 import base64
 import concurrent.futures
+import contextlib
 import datetime
 import html
 import json
@@ -1018,6 +1019,127 @@ def engine_mwmbl(ctx):
     return out
 
 
+# ── Owner-requested expansion (v1.9, probe evidence in engine-notes) ──
+
+# Google Custom Search JSON API — free 100 queries/day, official Google
+# results. Needs BOTH GOOGLE_API_KEY and a Programmable Search Engine cx.
+def engine_google_cse(ctx):
+    cx = ctx["env"].get("GOOGLE_CX")
+    if not cx:
+        raise RuntimeError("GOOGLE_CX not set — create a search engine at "
+                           "programmablesearchengine.google.com and put its id in GOOGLE_CX")
+    params = {"key": ctx["env"].get("GOOGLE_API_KEY"), "cx": cx, "q": ctx["query"],
+              "num": str(min(max(ctx["n"], 1), 10))}
+    if ctx["lang"] == "zh":
+        params["hl"] = "zh-CN"
+    elif ctx["lang"] == "en":
+        params["hl"] = "en"
+    status, body = http_text("https://www.googleapis.com/customsearch/v1?" + urllib.parse.urlencode(params),
+                             timeout=ctx["timeout"], headers={"accept": "application/json"})
+    if status != 200:
+        msg = ""
+        # error.message survives shape changes; suppress non-dict JSON (AttributeError)
+        # and parse failures alike.
+        with contextlib.suppress(RuntimeError, ValueError, AttributeError):
+            msg = ": " + str(parse_json(body).get("error", {}).get("message", ""))[:100]
+        raise RuntimeError(f"HTTP {status}{msg}")
+    items = parse_json(body).get("items", [])
+    return [{"title": r["title"], "url": r["link"], "snippet": (r.get("snippet") or "")[:400]}
+            for r in items if r.get("link") and r.get("title")]
+
+
+# Semantic Scholar Graph API — free, keyless (shared per-IP anonymous pool,
+# often 429 from proxy/datacenter exits); a free S2_API_KEY lifts the limit.
+def engine_semantic_scholar(ctx):
+    params = {"query": ctx["query"], "limit": str(min(ctx["n"], 10)),
+              "fields": "title,url,year,venue,citationCount"}
+    headers = {"accept": "application/json"}
+    if ctx["env"].get("S2_API_KEY"):
+        headers["x-api-key"] = ctx["env"]["S2_API_KEY"]
+    status, body = http_text("https://api.semanticscholar.org/graph/v1/paper/search?" + urllib.parse.urlencode(params),
+                             timeout=ctx["timeout"], headers=headers)
+    if status == 429:
+        raise RuntimeError("Semantic Scholar rate limit (shared anonymous pool) — "
+                           "retry later or set S2_API_KEY (free)")
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    items = parse_json(body).get("data", [])
+    out = []
+    for r in items:
+        if not (r.get("url") and r.get("title")):
+            continue
+        meta = " · ".join(filter(None, [str(r.get("year", "")), r.get("venue", ""),
+            f"{r['citationCount']} citations" if r.get("citationCount") is not None else ""]))
+        out.append({"title": r["title"], "url": r["url"], "snippet": meta})
+    return out
+
+
+# Bing News RSS — keyless, CN-reachable. Item links are apiclick.aspx
+# wrappers carrying the real target in the url= param (observed 2026-11-09);
+# News:Source carries the publisher.
+def _parse_bing_news_rss(ctx, body):
+    results = []
+    for m in re.finditer(r"<item>([\s\S]*?)</item>", body):
+        if len(results) >= ctx["n"] * 2:
+            break
+        item = re.sub(r"<!\[CDATA\[([\s\S]*?)\]\]>", r"\1", m.group(1))
+        tm = re.search(r"<title>([\s\S]*?)</title>", item)
+        lm = re.search(r"<link>([\s\S]*?)</link>", item)
+        sm = re.search(r"<News:Source>([\s\S]*?)</News:Source>", item)
+        dm = re.search(r"<pubDate>([\s\S]*?)</pubDate>", item)
+        title = strip_tags(tm.group(1) if tm else "")
+        link = html.unescape(lm.group(1)) if lm else ""
+        # url= is the last param and carries the raw target — take the rest greedily.
+        up = re.search(r"[?&]url=(.+)$", link)
+        url = urllib.parse.unquote(up.group(1)) if up else link
+        source = strip_tags(sm.group(1)) if sm else ""
+        date = strip_tags(dm.group(1)) if dm else ""
+        if not url.startswith("http") or not title:
+            continue
+        results.append({"title": title, "url": url,
+                        "snippet": " · ".join(filter(None, [source, date]))})
+    if not results:
+        raise RuntimeError("no results parsed")
+    return results
+
+
+def engine_bing_news(ctx):
+    params = {"q": ctx["query"], "format": "rss"}
+    if ctx["lang"] == "zh":
+        params["setmkt"] = "zh-CN"
+    elif ctx["lang"] == "en":
+        params["setmkt"] = "en-US"
+    status, body = http_text("https://www.bing.com/news/search?" + urllib.parse.urlencode(params),
+                             timeout=ctx["timeout"],
+                             headers={"referer": "https://www.bing.com/",
+                                      "upgrade-insecure-requests": "1"})
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    return _parse_bing_news_rss(ctx, body)
+
+
+# Gitee API v5 — anonymous search returns EMPTY arrays (observed 2026-11-09),
+# so this engine is gated on a free GITEE_TOKEN. Routed only when the token
+# exists (see route_auto) to keep token-less runs noise-free.
+def engine_gitee(ctx):
+    params = {"q": ctx["query"], "per_page": str(min(ctx["n"], 10)),
+              "access_token": ctx["env"].get("GITEE_TOKEN")}
+    status, body = http_text("https://gitee.com/api/v5/search/repositories?" + urllib.parse.urlencode(params),
+                             timeout=ctx["timeout"], headers={"accept": "application/json"})
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    items = parse_json(body) or []
+    out = []
+    for r in items:
+        if not (r.get("html_url") and (r.get("full_name") or r.get("human_name"))):
+            continue
+        name = r.get("human_name") or r.get("full_name")
+        out.append({"title": f"{name} ⭐{r.get('stargazers_count', 0)}",
+                    "url": r["html_url"],
+                    "snippet": (r.get("description") or "")[:300]})
+    return out
+
+
 def engine_searxng(ctx):
     raw = os.environ.get("SEARXNG_BASE_URL")
     if not raw:
@@ -1156,6 +1278,9 @@ ENGINES = {
     "wikipedia": (engine_wikipedia, None, frozenset()),
     "stackexchange": (engine_stack_exchange, None, frozenset({"auto"})),
     "github": (engine_github, None, frozenset({"auto"})),
+    "bingnews": (engine_bing_news, None, frozenset({"auto"})),
+    "semanticscholar": (engine_semantic_scholar, "S2_API_KEY", frozenset({"auto", "optional_key"})),
+    "gitee": (engine_gitee, "GITEE_TOKEN", frozenset({"auto"})),
     "hn": (engine_hn, None, frozenset()),
     "juejin": (engine_juejin, None, frozenset()),
     "arxiv": (engine_arxiv, None, frozenset()),
@@ -1164,6 +1289,7 @@ ENGINES = {
     "openalex": (engine_openalex, None, frozenset()),
     "crossref": (engine_crossref, None, frozenset()),
     "pubmed": (engine_pubmed, None, frozenset()),
+    "googlecse": (engine_google_cse, "GOOGLE_API_KEY", frozenset()),
     "huggingface": (engine_huggingface, None, frozenset()),
     "baidu": (engine_baidu, None, frozenset()),
     "sogouweb": (engine_sogou_web, None, frozenset()),
@@ -1183,16 +1309,21 @@ def _extract_intl_query(query: str) -> str:
     return max(cleaned, key=len) if cleaned else query
 
 
-def route_auto(query: str) -> dict:
+def route_auto(query: str, env: dict | None = None) -> dict:
     """Query-intent routing: auto tier engines join on strong signals only."""
     add = []
     q = query.lower()
     if re.search(r"github|gitee|开源仓库|源码|repo\b|open[- ]?source", q):
         add.append("github")
+        # Gitee anonymous search is empty (engine-notes v1.9) — only route when tokened.
+        if env and env.get("GITEE_TOKEN"):
+            add.append("gitee")
     if re.search(r"stackoverflow|stack\s?exchange|报错|exception|traceback|怎么解决|how to (fix|debug)", q):
         add.append("stackexchange")
     if re.search(r"论文|文献|arxiv|学术|research paper|preprint", q):
-        add.extend(["arxiv", "openalex", "crossref", "pubmed"])
+        add.extend(["arxiv", "openalex", "crossref", "pubmed", "semanticscholar"])
+    if re.search(r"新闻|快讯|资讯|breaking news|latest news", q):
+        add.append("bingnews")
     if re.search(r"什么是|百科|维基百科|wikipedia|是谁|who is|history of", q):
         add.append("wikipedia")
     if re.search(r"hacker\s?news|show\s?hn|tech news|科技新闻", q):
@@ -1312,7 +1443,8 @@ def main():
            ("BRAVE_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY", "EXA_API_KEY",
             "FIRECRAWL_API_KEY", "BOCHA_API_KEY", "METASO_API_KEY", "LINKUP_API_KEY",
             "OLLAMA_API_KEY", "ANYSEARCH_API_KEY", "KEENABLE_API_KEY",
-            "SEARXNG_BASE_URL")
+            "SEARXNG_BASE_URL", "GOOGLE_API_KEY", "GOOGLE_CX", "S2_API_KEY",
+            "GITEE_TOKEN")
            if os.environ.get(k)}
 
     ctx = {"query": build_query(args), "n": args.num, "days": args.days,
@@ -1339,7 +1471,7 @@ def main():
     in_cooldown = [n for n in names if state.get(n, {}).get("until", 0) > now_ms]
     cooldown_skipped = []
     if not args.engine:
-        routed = route_auto(ctx["query"])
+        routed = route_auto(ctx["query"], env)
         for n in routed["engines"]:
             if n not in [e[0] for e in engines] and n in ENGINES:
                 engines.append((n, ENGINES[n][0]))

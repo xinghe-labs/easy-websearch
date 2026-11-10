@@ -44,12 +44,18 @@ references/           engine schemas & research workflow notes
    input `ctx = {query, n, days, lang, timeout, env}`, output
    `[{title, url, snippet}]`. Throw on failure — the runner isolates engines.
 3. Register it in `ENGINES` (both files): baseline (no key), keyed, or backup
-   (`optional_key`/`backup` flags).
+   (`optional_key`/`backup` flags) — or auto tier (`auto` flag, routed by
+   query intent in `routeAuto`/`route_auto`; keep both pattern sets in sync).
 4. Add the key to the env-collection list in `search.py` `main()` — this is
    easy to miss and has bitten us before (see v1.2 notes).
-5. Extend `tests/e2e.sh` (keyed-hidden-without-key, opt-in behavior) and
+5. Extend the tests: pure-function assertions (`tests/unit.mjs` +
+   `tests/unit_test.py`, kept in lockstep) for new routing patterns; HTML/RSS
+   parsers need a trimmed snapshot in `tests/snapshots/` covered by
+   `tests/parsers.test.mjs` + `tests/parsers_test.py`. JSON-API engines:
+   verify the live contract with a probe first and record it in engine-notes.
+6. Extend `tests/e2e.sh` (keyed-hidden-without-key, opt-in behavior) and
    `doctor.*` needs no change (it enumerates `ENGINES`).
-6. Update `SKILL.md`, `README.md`, `README.zh-CN.md` engine lists and
+7. Update `SKILL.md`, `README.md`, `README.zh-CN.md` engine lists and
    `CHANGELOG.md`.
 
 ## Testing

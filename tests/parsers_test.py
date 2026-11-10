@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from search import (  # noqa: E402
     _parse_baidu_results,
+    _parse_bing_news_rss,
     _parse_bing_results,
     _parse_bing_rss,
     _parse_ddg_html,
@@ -111,6 +112,14 @@ eq("so360-mobile: jump?u decoded (card 1)", r[0]["url"], "https://study.example.
 eq("so360-mobile: <em> title stripped", r[0]["title"], "react hooks 全套教程")
 eq("so360-mobile: g-main summary snippet", r[0]["snippet"], "这个课程主要教大家掌握 react hooks")
 eq("so360-mobile: jump?u decoded (card 2)", r[1]["url"], "https://second.example.com/video/42")
+
+# ── bing news RSS ──
+r = _parse_bing_news_rss(CTX, snap("bing-news-rss.xml"))
+eq("bing-news: count", len(r), 2)
+eq("bing-news: url= param extracted + decoded", r[0]["url"], "https://www.msn.cn/zh-cn/技术/nvidia-rtx-5090")
+eq("bing-news: CDATA title", r[0]["title"], "Nvidia 否认 RTX 5090 显卡停产")
+eq("bing-news: News:Source + pubDate snippet", r[0]["snippet"], "快科技 on MSN · Tue, 09 Nov 2026 08:00:00 GMT")
+eq("bing-news: plain item url", r[1]["url"], "https://www.investors.com/news/technology/nvidia-stock/")
 
 # ── empty pages fail with the canonical error ──
 throws("ddg-html: empty body", lambda: _parse_ddg_html(CTX, "<div></div>"), "no results parsed")

@@ -43,18 +43,22 @@ command -v node && echo NODE_OK || command -v python3 && echo PY_OK
 Optional upgrades (all optional; detected automatically, never required):
 
 ```bash
-export BRAVE_API_KEY=...      # https://brave.com/search/api/  (2k free/mo)
+export BRAVE_API_KEY=...      # https://brave.com/search/api/  (2k free/mo, card required)
 export TAVILY_API_KEY=...     # https://tavily.com             (1k free/mo)
-export SERPER_API_KEY=...     # https://serper.dev             (Google results)
-export EXA_API_KEY=...        # https://exa.ai                 (semantic search)
-export FIRECRAWL_API_KEY=...  # https://firecrawl.dev          (search + better fetch)
-export BOCHA_API_KEY=...      # https://open.bochaai.com       (Chinese web search)
+export SERPER_API_KEY=...     # https://serper.dev             (2,500 one-time, Google results)
+export EXA_API_KEY=...        # https://exa.ai                 ($10/mo credits, semantic search)
+export FIRECRAWL_API_KEY=...  # https://firecrawl.dev          (1k/mo, search + better fetch)
+export BOCHA_API_KEY=...      # https://open.bochaai.com       (Chinese web search, paid)
 export METASO_API_KEY=...     # https://metaso.cn/search-api   (Chinese AI search)
-export LINKUP_API_KEY=...     # https://linkup.so              (sourced answers)
+export LINKUP_API_KEY=...     # https://linkup.so              ($20/mo credit, sourced answers)
 export OLLAMA_API_KEY=...     # https://ollama.com             (web search API)
+export GOOGLE_API_KEY=...     # https://console.cloud.google.com (CSE, 100/day)
+export GOOGLE_CX=...          # https://programmablesearchengine.google.com (search engine id)
+export GITEE_TOKEN=...        # https://gitee.com/profile/personal_access_tokens (CN code search)
 export SEARXNG_BASE_URL=...   # self-hosted SearXNG (enable JSON in settings.yml)
 export ANYSEARCH_API_KEY=...  # optional; anonymous works with lower limits
 export KEENABLE_API_KEY=...   # optional; anonymous works with lower limits
+export S2_API_KEY=...         # optional; https://www.semanticscholar.org/product/api (lifts 429s)
 
 Keyless backup engines (anysearch, keenable, sogouweixin) are OFF by default.
 opt in per-run with `--engine sogouweixin` (WeChat articles — great for

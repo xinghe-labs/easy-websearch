@@ -45,10 +45,12 @@ def ok(name, cond):
 
 # ── route_auto ──
 eq("routeAuto: github signal", route_auto("github 教程")["engines"], ["github"])
-eq("routeAuto: 学术四件套", route_auto("论文 写作")["engines"], ["arxiv", "openalex", "crossref", "pubmed"])
+eq("routeAuto: 学术五件套", route_auto("论文 写作")["engines"], ["arxiv", "openalex", "crossref", "pubmed", "semanticscholar"])
 eq("routeAuto: 什么是→wikipedia", route_auto("什么是 webgpu")["engines"], ["wikipedia"])
 eq("routeAuto: 掘金+csdn", route_auto("掘金 教程")["engines"], ["juejin", "csdn"])
 eq("routeAuto: huggingface", route_auto("数据集 下载")["engines"], ["huggingface"])
+eq("routeAuto: 新闻→bingnews", route_auto("AI 最新新闻")["engines"], ["bingnews"])
+eq("routeAuto: gitee 无 token 不路由", route_auto("开源仓库 推荐", {})["engines"], ["github"])
 eq("routeAuto: 无匹配→空", route_auto("今天天气")["engines"], [])
 eq("routeAuto: 空查询→空", route_auto("")["engines"], [])
 
