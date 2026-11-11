@@ -281,17 +281,23 @@ first-pass answer):
     { "subQuery": "...",
       "engines_used": ["ddg", "bing"],
       "results": [ { "title", "url", "snippet", "engines",
-                     "fetched": true, "content_excerpt": "..." } ] }
+                     "fetched": true, "content_excerpt": "..." },
+                   { "title", "url", "snippet", "engines",
+                     "fetch_error": "HTTP 403" } ] }
   ],
   "cross_hits": [ { "url", "engines", "count" } ],  // >=2 engines agree
   "coverage": { "bing": 4, "ddg": 3 },              // per-engine hit counts
-  "budget_used": { "searches": 6, "fetches": 9 }
+  "budget_used": { "searches": 6, "fetches": 9, "fetch_failures": 2 }
 }
 ```
 
 Read order: `cross_hits` first (that is your confidence ranking) → then only
 the `content_excerpt` fields you actually need → cite `url`. Treat `coverage`
 as the engine note for your answer (e.g. "ddg contributed nothing this run").
+
+A result carrying `fetch_error` could **not** be read — you have its title and
+snippet only. Never imply you read such a page, and say so if the answer
+hinges on it (`fetch_failures` in `budget_used` is the same fact aggregated).
 
 Budget: one research task stays at **≤ 8 searches and ≤ 12 fetches** — the
 `research` defaults already match. `fetch` starts at `--max-chars 4000` and

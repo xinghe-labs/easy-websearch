@@ -82,7 +82,7 @@ const subQueries = flags.queries
   ? flags.queries.split(",").map(s => s.trim()).filter(Boolean).slice(0, 6)
   : defaultSubQueries(question);
 
-const budget = { searches: 0, fetches: 0 };
+const budget = { searches: 0, fetches: 0, fetch_failures: 0 };
 const evidence = [];       // per-sub-query results
 const urlHits = new Map(); // url → { engines: Set, count }
 
@@ -169,6 +169,9 @@ for (const sr of searchResults.filter(Boolean)) {
   }
 }
 const fetchResults = await Promise.all(fetchTargets.slice(0, flags.maxFetches).map(fetchPage));
+// Count failures per fetch attempt (not per attachment: one URL can appear
+// under several sub-queries).
+for (const f of fetchResults) if (f && !f.ok) budget.fetch_failures++;
 
 // Phase 3: attach fetch results to evidence
 const fetchByUrl = new Map(fetchResults.filter(Boolean).map(f => [f.url, f]));
@@ -176,6 +179,10 @@ for (const sr of searchResults.filter(Boolean)) {
   for (const r of sr.results) {
     const f = fetchByUrl.get(r.url);
     if (f?.ok) { r.fetched = true; r.content_excerpt = f.excerpt; }
+    // A failed page fetch must be visible: the agent is told to read
+    // content_excerpt, and its absence would otherwise be indistinguishable
+    // from "this page had nothing".
+    else if (f) { r.fetch_error = f.reason || "fetch failed"; }
   }
   evidence.push(sr);
 }
@@ -215,7 +222,7 @@ if (flags.json) {
     console.log(`── ${sr.subQuery} ──`);
     for (const r of (sr.results || []).slice(0, 5)) {
       console.log(`  ${r.title}`);
-      console.log(`    ${r.url}  [${r.engines.join(", ")}]${r.fetched ? " 📄已抓取" : ""}`);
+      console.log(`    ${r.url}  [${r.engines.join(", ")}]${r.fetched ? " 📄已抓取" : r.fetch_error ? " ⚠抓取失败" : ""}`);
       if (r.snippet) console.log(`    ${r.snippet.slice(0, 120)}`);
     }
   }
@@ -223,6 +230,6 @@ if (flags.json) {
     console.log(`\n── 交叉命中（多引擎共同认可）──`);
     for (const c of crossHits.slice(0, 5)) console.log(`  ${c.count}× ${c.url}`);
   }
-  console.log(`\n预算: 搜索 ${budget.searches}/${flags.maxSearches} · 抓取 ${budget.fetches}/${flags.maxFetches}`);
+  console.log(`预算: 搜索 ${budget.searches}/${flags.maxSearches} · 抓取 ${budget.fetches}/${flags.maxFetches}${budget.fetch_failures ? `（失败 ${budget.fetch_failures}）` : ""}`);
   console.log(`下一步: 将本证据包交给 agent 总结（结论需带 URL，冲突来源并列呈现）`);
 }

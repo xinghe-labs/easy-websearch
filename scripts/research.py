@@ -73,7 +73,7 @@ sub_queries = (
     else _default_sub_queries(question)
 )
 
-budget = {"searches": 0, "fetches": 0}
+budget = {"searches": 0, "fetches": 0, "fetch_failures": 0}
 evidence = []
 url_hits = {}
 
@@ -180,12 +180,22 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(fetch_targets), 6
     fetch_results = list(ex.map(fetch_page, fetch_targets[: args.max_fetches]))
 
 fetch_by_url = {f["url"]: f for f in fetch_results if f}
+# Count failures per fetch attempt (not per attachment: one URL can appear
+# under several sub-queries).
+for _f in fetch_results:
+    if _f and not _f.get("ok"):
+        budget["fetch_failures"] += 1
 for sr in search_results:
     for r in sr.get("results", []):
         f = fetch_by_url.get(r["url"])
         if f and f.get("ok"):
             r["fetched"] = True
             r["content_excerpt"] = f["excerpt"]
+        # A failed page fetch must be visible: the agent is told to read
+        # content_excerpt, and its absence would otherwise look like "this
+        # page had nothing".
+        elif f:
+            r["fetch_error"] = f.get("reason") or "fetch failed"
     evidence.append(sr)
 
 cross_hits = sorted(
@@ -217,7 +227,7 @@ else:
     for sr in evidence:
         print(f"── {sr['sub_query']} ──")
         for r in sr.get("results", [])[:5]:
-            fetched = " 📄已抓取" if r.get("fetched") else ""
+            fetched = " 📄已抓取" if r.get("fetched") else (" ⚠抓取失败" if r.get("fetch_error") else "")
             print(f"  {r['title']}")
             print(f"    {r['url']}  [{', '.join(r.get('engines', []))}]{fetched}")
             if r.get("snippet"):
@@ -226,5 +236,6 @@ else:
         print("\n── 交叉命中（多引擎共同认可）──")
         for c in cross_hits[:5]:
             print(f"  {c['count']}× {c['url']}")
-    print(f"\n预算: 搜索 {budget['searches']}/{args.max_searches} · 抓取 {budget['fetches']}/{args.max_fetches}")
+    print(f"\n预算: 搜索 {budget['searches']}/{args.max_searches} · 抓取 {budget['fetches']}/{args.max_fetches}"
+          + (f"（失败 {budget['fetch_failures']}）" if budget["fetch_failures"] else ""))
     print("下一步: 将本证据包交给 agent 总结（结论需带 URL，冲突来源并列呈现）")
