@@ -110,6 +110,37 @@ import('./scripts/search.mjs').then(({ routeAuto }) => {
 });"
 check "query-intent router unit cases" $?
 
+# --- v1.9.1: URL normalization must drop tracking params (dedup regression) ---
+node --input-type=module -e "
+import('./scripts/search.mjs').then(({ normalizeUrl }) => {
+  const cases = [
+    // CSDN appends these on every click — same article, two identities
+    ['https://blog.csdn.net/u/article/details/167755497?ops_request_misc=%7B%7D&request_id=abc&biz_id=1',
+     'https://blog.csdn.net/u/article/details/167755497'],
+    ['https://a.com/p?utm_source=x&utm_medium=y', 'https://a.com/p'],
+    ['https://b.com/p?spm=1.2.3&scene=126&isappinstalled=0', 'https://b.com/p'],
+  ];
+  for (const [a, b] of cases) {
+    if (normalizeUrl(a) !== normalizeUrl(b)) {
+      console.error('not merged:', normalizeUrl(a), '!=', normalizeUrl(b));
+      process.exit(1);
+    }
+  }
+  // real parameters must survive
+  if (normalizeUrl('https://c.com/p?id=42&utm_source=x') !== 'https://c.com/p?id=42') process.exit(1);
+});"
+check "url normalization drops tracking params" $?
+
+if command -v python3 >/dev/null 2>&1; then
+  python3 -c "
+import sys; sys.path.insert(0, 'scripts')
+from search import normalize_url as n
+assert n('https://blog.csdn.net/u/article/details/1?ops_request_misc=a&request_id=b&biz_id=1') == n('https://blog.csdn.net/u/article/details/1')
+assert n('https://a.com/p?utm_source=x') == n('https://a.com/p')
+assert n('https://c.com/p?id=42&utm_source=x') == 'https://c.com/p?id=42'"
+  check "py url normalization drops tracking params" $?
+fi
+
 node scripts/search.mjs "webgpu 是什么" -n 2 --json 2>/dev/null | json "
 const names = d.engines.map(e => e.name);
 if (!names.includes('wikipedia')) process.exit(1);"

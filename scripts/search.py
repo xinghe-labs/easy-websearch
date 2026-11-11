@@ -39,6 +39,14 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 RRF_K = 60
 
+# Academic indexes only pay off for academic questions. For everything else they
+# answer a multi-word query with one keyword and inject unrelated papers
+# (measured: "webgpu 浏览器支持情况" returned a Selenium VS-Code paper and a
+# campus-tour paper). Their contribution is halved unless the query looks
+# academic — coverage kept, dominance removed.
+ACADEMIC_ENGINES = frozenset({"arxiv", "openalex", "crossref", "pubmed", "semanticscholar"})
+ACADEMIC_INTENT = re.compile(r"(论文|文献|arxiv|学术|research paper|preprint)", re.I)
+
 
 _DIRECT_HOSTS = ("baidu.com", "weixin.sogou.com", "sogou.com",
                  "localhost", "127.0.0.1", "::1")
@@ -177,11 +185,23 @@ def strip_tags(s):
     return re.sub(r"\s+", " ", html.unescape(s)).strip()
 
 
+# Tracking parameters that never change the document — dropping them is what
+# lets two URLs for the same article fuse into one hit. CSDN
+# (ops_request_misc / request_id / biz_id) and Alibaba/WeChat share links
+# produced real duplicates in testing.
+TRACKING_PARAM = re.compile(
+    r"^(utm_|ref|fbclid|gclid|msclkid|yclid|ops_request_misc|request_id|biz_id"
+    r"|spm|scm|scene|isappinstalled|clicktime|enterid|share_token|share_source"
+    r"|from_source)",
+    re.I,
+)
+
+
 def normalize_url(u):
     try:
         x = urllib.parse.urlsplit(u)
         query = [(k, v) for k, v in urllib.parse.parse_qsl(x.query)
-                 if not re.match(r"^(utm_|ref$|fbclid)", k, re.I)]
+                 if not TRACKING_PARAM.match(k)]
         s = urllib.parse.urlunsplit((x.scheme, x.netloc.lower(), x.path,
                                      urllib.parse.urlencode(query), ""))
         return s.rstrip("/")
@@ -1552,7 +1572,13 @@ def main():
                 s["note"] = "days ignored by bing"
 
     all_engines = cooldown_skipped + statuses
-    fused = fuse(ok_results)[: args.num]
+    ranked = fuse(ok_results)
+    if not ACADEMIC_INTENT.search(ctx["query"]):
+        for r in ranked:
+            if all(e in ACADEMIC_ENGINES for e in r["engines"]):
+                r["score"] *= 0.5
+                r["demoted"] = True
+    fused = sorted(ranked, key=lambda r: -r["score"])[: args.num]
 
     if args.json:
         print(json.dumps({
@@ -1560,7 +1586,9 @@ def main():
             "engines": [{k: s[k] for k in ("name", "ok", "count", "ms", "error", "note") if k in s} for s in all_engines],
             "results": [{"rank": i + 1, "title": r["title"], "url": r["url"],
                          "snippet": r["snippet"], "score": round(r["score"], 4),
-                         "engines": r["engines"]} for i, r in enumerate(fused)],
+                         "engines": r["engines"],
+                         **({"demoted": True} if r.get("demoted") else {})}
+                        for i, r in enumerate(fused)],
         }, ensure_ascii=False, indent=2))
     else:
         lines = "\n  ".join(

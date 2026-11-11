@@ -28,6 +28,14 @@ const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 const DEFAULT_TIMEOUT = 8000;
 const RRF_K = 60;
+// Academic indexes only pay off for academic questions. For everything else
+// they answer a multi-word query with one keyword and inject unrelated papers
+// (measured: "webgpu 浏览器支持情况" returned a Selenium VS-Code paper and a
+// campus-tour paper; "如何 备份 手机 照片" returned an embedded-DHT paper).
+// Their contribution is halved unless the query looks academic — coverage is
+// kept, dominance is not.
+const ACADEMIC_ENGINES = new Set(["arxiv", "openalex", "crossref", "pubmed", "semanticscholar"]);
+const ACADEMIC_INTENT = /(论文|文献|arxiv|学术|research paper|preprint)/i;
 
 // ------------------------------------------------------------ config ----
 // ~/.config/easy-websearch/config.json — defaults for CLI flags.
@@ -280,12 +288,19 @@ function decodeEntities(s) {
 }
 const stripTags = (s) => decodeEntities(s.replace(/<[^>]*>/g, "")).replace(/\s+/g, " ").trim();
 
+// Tracking parameters that never change the document — dropping them is what
+// lets two URLs for the same article fuse into one hit instead of competing
+// with each other. CSDN (ops_request_misc / request_id / biz_id) and
+// Alibaba/WeChat share links produced real duplicates in testing.
+const TRACKING_PARAM =
+  /^(utm_|ref|fbclid|gclid|msclkid|yclid|ops_request_misc|request_id|biz_id|spm|scm|scene|isappinstalled|clicktime|enterid|share_token|share_source|from_source)/i;
+
 function normalizeUrl(u) {
   try {
     const x = new URL(u);
     x.hash = "";
     for (const k of [...x.searchParams.keys()]) {
-      if (/^(utm_|ref|fbclid)/i.test(k)) x.searchParams.delete(k);
+      if (TRACKING_PARAM.test(k)) x.searchParams.delete(k);
     }
     let s = x.toString();
     if (s.endsWith("/")) s = s.slice(0, -1);
@@ -1511,7 +1526,17 @@ async function main() {
   }
 
   const allEngines = [...cooldownSkipped, ...statuses];
-  const fused = fuse(statuses.filter((s) => s.ok)).slice(0, args.n);
+  // Demote (never drop) single-engine Chinese hits that share nothing with the
+  // query: they are usually noise, but dropping them would also lose a good
+  // result that happens to use a synonym. Junk sinks to the bottom instead.
+  const ranked = fuse(statuses.filter((s) => s.ok));
+  for (const r of ranked) {
+    if (!ACADEMIC_INTENT.test(ctx.query) && r.engines.every((e) => ACADEMIC_ENGINES.has(e))) {
+      r.score *= 0.5;
+      r.demoted = true;
+    }
+  }
+  const fused = ranked.sort((a, b) => b.score - a.score).slice(0, args.n);
 
   if (args.json) {
     console.log(JSON.stringify({
@@ -1520,6 +1545,7 @@ async function main() {
       results: fused.map((r, i) => ({
         rank: i + 1, title: r.title, url: r.url, snippet: r.snippet,
         score: +r.score.toFixed(4), engines: r.engines,
+        ...(r.demoted ? { demoted: true } : {}),
       })),
     }, null, 2));
   } else {
