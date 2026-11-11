@@ -203,6 +203,10 @@ Do not dump stdout or JSON at the user. Answer in this shape:
 
 - `engines` per hit lists which engines returned that URL — hits found by
   2+ engines rank higher (Reciprocal Rank Fusion) and are usually stronger sources.
+- `ok: true` with `count: 0` means **the engine answered but had nothing for
+  this query** (it carries `note: "reachable, no hits for this query"`). That
+  is not a failure — don't report it as one, and don't drop the engine from
+  your mental model of what was searched.
 - A failed engine (e.g. `ddg: FAILED (HTTP 202)`) is normal and non-fatal:
   fusion continues with the rest. Do not retry the whole search because one
   engine failed.
