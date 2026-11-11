@@ -44,8 +44,6 @@ RRF_K = 60
 # (measured: "webgpu 浏览器支持情况" returned a Selenium VS-Code paper and a
 # campus-tour paper). Their contribution is halved unless the query looks
 # academic — coverage kept, dominance removed.
-ACADEMIC_ENGINES = frozenset({"arxiv", "openalex", "crossref", "pubmed", "semanticscholar"})
-ACADEMIC_INTENT = re.compile(r"(论文|文献|arxiv|学术|research paper|preprint)", re.I)
 
 
 _DIRECT_HOSTS = ("baidu.com", "weixin.sogou.com", "sogou.com",
@@ -322,6 +320,22 @@ def _decode_bing_target(url):
         return None  # not decodable — keep the redirect URL
 
 
+# Interrogatives carry no topical signal — a SERP that only matches "如何" is
+# still answering a different question.
+CJK_STOP_BIGRAMS = frozenset({
+    "如何", "什么", "怎么", "怎样", "哪些", "哪个", "可以", "是否", "为什", "么样",
+    "我们", "你们", "他们", "这个", "那个", "一个", "有没", "没有", "需要",
+})
+
+
+def _cjk_bigrams(s):
+    out = set()
+    for seg in re.sub(r"[^\u4e00-\u9fa5]+", " ", s or "").split(" "):
+        for i in range(len(seg) - 1):
+            out.add(seg[i:i + 2])
+    return out
+
+
 def _looks_like_junk(results, query):
     """Bing bot-junk guard: under automation pressure Bing serves HTTP 200
     pages of unrelated results (observed: "webgpu" → Google homepage / Baidu
@@ -359,6 +373,25 @@ def _looks_like_junk(results, query):
         )
         if not any_hit:
             return True
+    # 4) CJK queries: under the same pressure bing degrades a multi-word query
+    # to its first character and serves a plausible SERP for that
+    # ("大模型 论文 综述" -> ten dictionary entries for 大). If no title shares
+    # a 2-char run with the query and no latin query word appears, the whole
+    # SERP answers something else.
+    if re.search(r"[\u4e00-\u9fa5]", query):
+        qb = [b for b in _cjk_bigrams(query) if b not in CJK_STOP_BIGRAMS]
+        if qb:
+            latin = re.findall(r"[a-z][a-z0-9+#.-]{2,}", query.lower())
+
+            def title_matches(r):
+                t = r.get("title") or ""
+                if any(w in t.lower() for w in latin):
+                    return True
+                tb = _cjk_bigrams(t)
+                return any(b in tb for b in qb)
+
+            if not any(title_matches(r) for r in results):
+                return True
     return False
 
 
@@ -929,9 +962,9 @@ def _searxng_base_and_auth(raw):
 
 def engine_wikipedia(ctx):
     query = ctx.get("intl_query") or ctx["query"]
-    cjk = bool(re.search(r"[\u4e00-\u9fa5]", ctx["query"]))
+    cjk = bool(re.search(r"[\u4e00-\u9fa5]", query))
     lang = ctx["lang"] if ctx["lang"] in ("zh", "en") else ("zh" if cjk else "en")
-    params = {"action": "query", "list": "search", "srsearch": ctx["query"],
+    params = {"action": "query", "list": "search", "srsearch": query,
               "format": "json", "srlimit": str(min(ctx["n"], 10))}
     # Wikipedia via slow proxies sits right at the generic timeout — give it 1.5×.
     status, body = retry_http_text(f"https://{lang}.wikipedia.org/w/api.php?{urllib.parse.urlencode(params)}",
@@ -946,7 +979,7 @@ def engine_wikipedia(ctx):
 
 def engine_stack_exchange(ctx):
     query = ctx.get("intl_query") or ctx["query"]
-    params = {"intitle": ctx["query"], "site": "stackoverflow",
+    params = {"intitle": query, "site": "stackoverflow",
               "pagesize": str(min(ctx["n"], 10))}
     status, body = retry_http_text("https://api.stackexchange.com/2.3/search/excerpts?" + urllib.parse.urlencode(params),
                              timeout=ctx["timeout"], headers={"accept": "application/json"})
@@ -961,7 +994,7 @@ def engine_stack_exchange(ctx):
 
 def engine_hn(ctx):
     query = ctx.get("intl_query") or ctx["query"]
-    params = {"query": ctx["query"], "hitsPerPage": str(min(ctx["n"], 10))}
+    params = {"query": query, "hitsPerPage": str(min(ctx["n"], 10))}
     status, body = retry_http_text("https://hn.algolia.com/api/v1/search?" + urllib.parse.urlencode(params),
                              timeout=ctx["timeout"], headers={"accept": "application/json"})
     if status != 200:
@@ -979,7 +1012,7 @@ def engine_hn(ctx):
 
 def engine_github(ctx):
     query = ctx.get("intl_query") or ctx["query"]
-    params = {"q": ctx["query"], "per_page": str(min(ctx["n"], 10))}
+    params = {"q": query, "per_page": str(min(ctx["n"], 10))}
     status, body = retry_http_text("https://api.github.com/search/repositories?" + urllib.parse.urlencode(params),
                              timeout=ctx["timeout"],
                              headers={"accept": "application/vnd.github+json"})
@@ -995,7 +1028,7 @@ def engine_github(ctx):
 
 def engine_juejin(ctx):
     query = ctx.get("intl_query") or ctx["query"]
-    params = {"query": ctx["query"], "id_type": "0", "cursor": "0",
+    params = {"query": query, "id_type": "0", "cursor": "0",
               "limit": str(min(ctx["n"], 10))}
     status, body = http_text("https://api.juejin.cn/search_api/v1/search?" + urllib.parse.urlencode(params),
                              timeout=ctx["timeout"], headers={"accept": "application/json"})
@@ -1019,7 +1052,7 @@ def engine_juejin(ctx):
 
 def engine_arxiv(ctx):
     query = ctx.get("intl_query") or ctx["query"]
-    params = {"search_query": f"all:{ctx['query']}", "max_results": str(min(ctx["n"], 10))}
+    params = {"search_query": f"all:{query}", "max_results": str(min(ctx["n"], 10))}
     status, body = http_text("http://export.arxiv.org/api/query?" + urllib.parse.urlencode(params),
                              timeout=ctx["timeout"])
     if status != 200:
@@ -1311,22 +1344,22 @@ ENGINES = {
     "linkup": (engine_linkup, "LINKUP_API_KEY", frozenset()),
     "ollama": (engine_ollama, "OLLAMA_API_KEY", frozenset()),
     "searxng": (engine_searxng, "SEARXNG_BASE_URL", frozenset()),
-    "wikipedia": (engine_wikipedia, None, frozenset()),
+    "wikipedia": (engine_wikipedia, None, frozenset({"auto"})),
     "stackexchange": (engine_stack_exchange, None, frozenset({"auto"})),
     "github": (engine_github, None, frozenset({"auto"})),
     "bingnews": (engine_bing_news, None, frozenset({"auto"})),
     "semanticscholar": (engine_semantic_scholar, "S2_API_KEY", frozenset({"auto", "optional_key"})),
     "gitee": (engine_gitee, "GITEE_TOKEN", frozenset({"auto"})),
-    "hn": (engine_hn, None, frozenset()),
-    "juejin": (engine_juejin, None, frozenset()),
-    "arxiv": (engine_arxiv, None, frozenset()),
+    "hn": (engine_hn, None, frozenset({"auto"})),
+    "juejin": (engine_juejin, None, frozenset({"auto"})),
+    "arxiv": (engine_arxiv, None, frozenset({"auto"})),
     "mwmbl": (engine_mwmbl, None, frozenset()),
-    "csdn": (engine_csdn, None, frozenset()),
-    "openalex": (engine_openalex, None, frozenset()),
-    "crossref": (engine_crossref, None, frozenset()),
-    "pubmed": (engine_pubmed, None, frozenset()),
+    "csdn": (engine_csdn, None, frozenset({"auto"})),
+    "openalex": (engine_openalex, None, frozenset({"auto"})),
+    "crossref": (engine_crossref, None, frozenset({"auto"})),
+    "pubmed": (engine_pubmed, None, frozenset({"auto"})),
     "googlecse": (engine_google_cse, "GOOGLE_API_KEY", frozenset()),
-    "huggingface": (engine_huggingface, None, frozenset()),
+    "huggingface": (engine_huggingface, None, frozenset({"auto"})),
     "baidu": (engine_baidu, None, frozenset()),
     "sogouweb": (engine_sogou_web, None, frozenset()),
     "so360": (engine_so360, None, frozenset()),
@@ -1360,11 +1393,13 @@ def route_auto(query: str, env: dict | None = None) -> dict:
         add.extend(["arxiv", "openalex", "crossref", "pubmed", "semanticscholar"])
     if re.search(r"新闻|快讯|资讯|breaking news|latest news", q):
         add.append("bingnews")
-    if re.search(r"什么是|百科|维基百科|wikipedia|是谁|who is|history of", q):
+    if re.search(r"什么是|是什么|啥是|是啥|什么意思|百科|维基百科|wikipedia|是谁|who is|history of", q):
         add.append("wikipedia")
     if re.search(r"hacker\s?news|show\s?hn|tech news|科技新闻", q):
         add.append("hn")
-    if re.search(r"掘金|juejin|csdn|前端开发|javascript 教程|vue\b|react\b", q):
+    # Tech-vertical engines: only useful for technical questions, and actively
+    # harmful elsewhere (a medical query returned "React 面试题" from juejin).
+    if re.search(r"编程|代码|程序员|开发者|教程|报错|调试|\bbug\b|算法|面试|框架|源码|数据库|\bsql\b|docker|k8s|kubernetes|linux|\bgit\b|\bapi\b|\bsdk\b|javascript|typescript|python|\bjava\b|golang|\brust\b|\breact\b|\bvue\b|node\.?js|webpack|vite|\bcss\b|\bhtml\b|掘金|juejin|csdn|机器学习|深度学习|大模型|\bllm\b|模型部署|神经网络", q):
         add.extend(["juejin", "csdn"])
     if re.search(r"huggingface|数据集|dataset|模型权重|model weights|safetensors|embedding 模型", q):
         add.append("huggingface")
@@ -1512,8 +1547,10 @@ def main():
             if n not in [e[0] for e in engines] and n in ENGINES:
                 engines.append((n, ENGINES[n][0]))
         if routed["engines"]:
+            # Only vertical engines opt into the extracted ASCII run; rewriting
+            # ctx["query"] would drop the Chinese half of a mixed query for
+            # every general-web engine.
             ctx["intl_query"] = routed["intl_query"]
-            ctx["query"] = routed["intl_query"]
     elif args.no_cooldown:
         pass  # --no-cooldown implies skip routing too (clean state)
     if not args.engine and in_cooldown and len(in_cooldown) < len(engines):
@@ -1573,12 +1610,30 @@ def main():
 
     all_engines = cooldown_skipped + statuses
     ranked = fuse(ok_results)
-    if not ACADEMIC_INTENT.search(ctx["query"]):
-        for r in ranked:
-            if all(e in ACADEMIC_ENGINES for e in r["engines"]):
-                r["score"] *= 0.5
-                r["demoted"] = True
-    fused = sorted(ranked, key=lambda r: -r["score"])[: args.num]
+    # --site / --exclude-site are enforced HERE, not only by handing the site:
+    # operator to engines: vertical engines ignore it outright and bing does not
+    # always honour it, so "restrict to domain" was advisory.
+    if args.site or args.exclude_site:
+        def _host(u):
+            try:
+                return (urllib.parse.urlsplit(u).hostname or "").removeprefix("www.").lower()
+            except ValueError:
+                return ""
+
+        def _norm(d):
+            d = d.lower().removeprefix("http://").removeprefix("https://").removeprefix("www.")
+            return d.split("/")[0]
+
+        sites = [d for d in (_norm(s) for s in args.site) if d]
+        excluded = [d for d in (_norm(s) for s in args.exclude_site) if d]
+
+        def _in(h, d):
+            return h == d or h.endswith("." + d)
+
+        ranked = [r for r in ranked
+                  if (not sites or any(_in(_host(r["url"]), d) for d in sites))
+                  and not any(_in(_host(r["url"]), d) for d in excluded)]
+    fused = ranked[: args.num]
 
     if args.json:
         print(json.dumps({
@@ -1586,8 +1641,7 @@ def main():
             "engines": [{k: s[k] for k in ("name", "ok", "count", "ms", "error", "note") if k in s} for s in all_engines],
             "results": [{"rank": i + 1, "title": r["title"], "url": r["url"],
                          "snippet": r["snippet"], "score": round(r["score"], 4),
-                         "engines": r["engines"],
-                         **({"demoted": True} if r.get("demoted") else {})}
+                         "engines": r["engines"]}
                         for i, r in enumerate(fused)],
         }, ensure_ascii=False, indent=2))
     else:

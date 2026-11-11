@@ -28,14 +28,6 @@ const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 const DEFAULT_TIMEOUT = 8000;
 const RRF_K = 60;
-// Academic indexes only pay off for academic questions. For everything else
-// they answer a multi-word query with one keyword and inject unrelated papers
-// (measured: "webgpu 浏览器支持情况" returned a Selenium VS-Code paper and a
-// campus-tour paper; "如何 备份 手机 照片" returned an embedded-DHT paper).
-// Their contribution is halved unless the query looks academic — coverage is
-// kept, dominance is not.
-const ACADEMIC_ENGINES = new Set(["arxiv", "openalex", "crossref", "pubmed", "semanticscholar"]);
-const ACADEMIC_INTENT = /(论文|文献|arxiv|学术|research paper|preprint)/i;
 
 // ------------------------------------------------------------ config ----
 // ~/.config/easy-websearch/config.json — defaults for CLI flags.
@@ -414,6 +406,21 @@ async function engineDDG(ctx) {
 // of unrelated results (observed: "webgpu" → Google homepage / Baidu baike)
 // instead of a clean failure. Detect the classic junk shapes and fail soft —
 // the cooldown + other engines take over.
+// Interrogatives carry no topical signal — a SERP that only matches "如何"
+// is still answering a different question.
+const CJK_STOP_BIGRAMS = new Set([
+  "如何", "什么", "怎么", "怎样", "哪些", "哪个", "可以", "是否", "为什", "么样",
+  "我们", "你们", "他们", "这个", "那个", "一个", "有没", "没有", "需要",
+]);
+
+function cjkBigrams(s) {
+  const out = new Set();
+  for (const seg of String(s || "").replace(/[^\u4e00-\u9fa5]+/g, " ").split(" ")) {
+    for (let i = 0; i + 1 < seg.length; i++) out.add(seg.slice(i, i + 2));
+  }
+  return out;
+}
+
 function looksLikeJunk(results, query) {
   if (results.length < 2) return false;
   const hostOf = (r) => { try { return new URL(r.url).hostname.replace(/^www\./, ""); } catch { return r.url; } };
@@ -432,6 +439,24 @@ function looksLikeJunk(results, query) {
       return words.some((w) => hay.includes(w));
     });
     if (!anyHit) return true;
+  }
+  // 4) CJK queries: under the same pressure bing degrades a multi-word query
+  // to its first character and serves a plausible SERP for that
+  // ("大模型 论文 综述" → ten dictionary entries for 大, "如何 备份 手机 照片" →
+  // the 如何 baike page). If no title shares a 2-char run with the query and
+  // no latin query word appears, the whole SERP answers something else.
+  if (/[\u4e00-\u9fa5]/.test(query)) {
+    const qb = [...cjkBigrams(query)].filter((b) => !CJK_STOP_BIGRAMS.has(b));
+    if (qb.length) {
+      const latin = query.toLowerCase().match(/[a-z][a-z0-9+#.-]{2,}/g) || [];
+      const anyTitleMatch = results.some((r) => {
+        const t = String(r.title || "");
+        if (latin.some((w) => t.toLowerCase().includes(w))) return true;
+        const tb = cjkBigrams(t);
+        return qb.some((b) => tb.has(b));
+      });
+      if (!anyTitleMatch) return true;
+    }
   }
   return false;
 }
@@ -954,10 +979,13 @@ function searxngBaseAndAuth(raw) {
 // ── Vertical engines (official keyless APIs) — auto-activated by query intent ──
 
 async function engineWikipedia(ctx) {
-  const cjk = /[\u4e00-\u9fa5]/.test(ctx.query);
+  // Vertical engines index English — prefer the extracted ASCII run when
+  // routing supplied one, but never rewrite the general-web query.
+  const q = ctx.intlQuery || ctx.query;
+  const cjk = /[\u4e00-\u9fa5]/.test(q);
   const lang = ["zh", "en"].includes(ctx.lang) ? ctx.lang : cjk ? "zh" : "en";
   const params = new URLSearchParams({
-    action: "query", list: "search", srsearch: ctx.query,
+    action: "query", list: "search", srsearch: q,
     format: "json", srlimit: String(Math.min(ctx.n, 10)),
   });
   // Wikipedia via slow proxies sits right at the generic timeout — give it 1.5×.
@@ -975,8 +1003,11 @@ async function engineWikipedia(ctx) {
 }
 
 async function engineStackExchange(ctx) {
+  // Vertical engines index English — prefer the extracted ASCII run when
+  // routing supplied one, but never rewrite the general-web query.
+  const q = ctx.intlQuery || ctx.query;
   const params = new URLSearchParams({
-    intitle: ctx.query, site: "stackoverflow",
+    intitle: q, site: "stackoverflow",
     pagesize: String(Math.min(ctx.n, 10)),
   });
   const { status, body } = await retryFetch(`https://api.stackexchange.com/2.3/search/excerpts?${params}`, {
@@ -994,7 +1025,10 @@ async function engineStackExchange(ctx) {
 }
 
 async function engineHn(ctx) {
-  const params = new URLSearchParams({ query: ctx.query, hitsPerPage: String(Math.min(ctx.n, 10)) });
+  // Vertical engines index English — prefer the extracted ASCII run when
+  // routing supplied one, but never rewrite the general-web query.
+  const q = ctx.intlQuery || ctx.query;
+  const params = new URLSearchParams({ query: q, hitsPerPage: String(Math.min(ctx.n, 10)) });
   const { status, body } = await retryFetch(`https://hn.algolia.com/api/v1/search?${params}`, {
     timeout: ctx.timeout, headers: { accept: "application/json" },
   });
@@ -1010,7 +1044,10 @@ async function engineHn(ctx) {
 }
 
 async function engineGithub(ctx) {
-  const params = new URLSearchParams({ q: ctx.query, per_page: String(Math.min(ctx.n, 10)) });
+  // Vertical engines index English — prefer the extracted ASCII run when
+  // routing supplied one, but never rewrite the general-web query.
+  const q = ctx.intlQuery || ctx.query;
+  const params = new URLSearchParams({ q: q, per_page: String(Math.min(ctx.n, 10)) });
   const { status, body } = await retryFetch(`https://api.github.com/search/repositories?${params}`, {
     timeout: ctx.timeout,
     headers: { accept: "application/vnd.github+json" },
@@ -1026,7 +1063,10 @@ async function engineGithub(ctx) {
 }
 
 async function engineJuejin(ctx) {
-  const params = new URLSearchParams({ query: ctx.query, id_type: "0", cursor: "0", limit: String(Math.min(ctx.n, 10)) });
+  // Vertical engines index English — prefer the extracted ASCII run when
+  // routing supplied one, but never rewrite the general-web query.
+  const q = ctx.intlQuery || ctx.query;
+  const params = new URLSearchParams({ query: q, id_type: "0", cursor: "0", limit: String(Math.min(ctx.n, 10)) });
   const { status, body } = await fetchText(`https://api.juejin.cn/search_api/v1/search?${params}`, {
     timeout: ctx.timeout, headers: { accept: "application/json" },
   });
@@ -1048,8 +1088,11 @@ async function engineJuejin(ctx) {
 }
 
 async function engineArxiv(ctx) {
+  // Vertical engines index English — prefer the extracted ASCII run when
+  // routing supplied one, but never rewrite the general-web query.
+  const q = ctx.intlQuery || ctx.query;
   const params = new URLSearchParams({
-    search_query: `all:${ctx.query}`,
+    search_query: `all:${q}`,
     max_results: String(Math.min(ctx.n, 10)),
   });
   const { status, body } = await fetchText(`http://export.arxiv.org/api/query?${params}`, {
@@ -1086,7 +1129,10 @@ async function engineMwmbl(ctx) {
 // ── Academic / registry engines (official keyless APIs) — auto tier ──
 
 async function engineCSDN(ctx) {
-  const params = new URLSearchParams({ q: ctx.query, t: "blog", p: "1" });
+  // Vertical engines index English — prefer the extracted ASCII run when
+  // routing supplied one, but never rewrite the general-web query.
+  const q = ctx.intlQuery || ctx.query;
+  const params = new URLSearchParams({ q: q, t: "blog", p: "1" });
   const { status, body } = await fetchText(`https://so.csdn.net/api/v3/search?${params}`, {
     timeout: ctx.timeout,
     headers: { accept: "application/json", referer: "https://www.csdn.net/" },
@@ -1103,7 +1149,10 @@ async function engineCSDN(ctx) {
 }
 
 async function engineOpenAlex(ctx) {
-  const params = new URLSearchParams({ search: ctx.query, "per-page": String(Math.min(ctx.n, 10)) });
+  // Vertical engines index English — prefer the extracted ASCII run when
+  // routing supplied one, but never rewrite the general-web query.
+  const q = ctx.intlQuery || ctx.query;
+  const params = new URLSearchParams({ search: q, "per-page": String(Math.min(ctx.n, 10)) });
   const { status, body } = await retryFetch(`https://api.openalex.org/works?${params}`, {
     timeout: ctx.timeout, headers: { accept: "application/json" },
   });
@@ -1121,7 +1170,10 @@ async function engineOpenAlex(ctx) {
 }
 
 async function engineCrossref(ctx) {
-  const params = new URLSearchParams({ query: ctx.query, rows: String(Math.min(ctx.n, 10)) });
+  // Vertical engines index English — prefer the extracted ASCII run when
+  // routing supplied one, but never rewrite the general-web query.
+  const q = ctx.intlQuery || ctx.query;
+  const params = new URLSearchParams({ query: q, rows: String(Math.min(ctx.n, 10)) });
   const { status, body } = await retryFetch(`https://api.crossref.org/works?${params}`, {
     timeout: ctx.timeout, headers: { accept: "application/json" },
   });
@@ -1137,9 +1189,12 @@ async function engineCrossref(ctx) {
 }
 
 async function enginePubMed(ctx) {
+  // Vertical engines index English — prefer the extracted ASCII run when
+  // routing supplied one, but never rewrite the general-web query.
+  const q = ctx.intlQuery || ctx.query;
   const base = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
   const headers = { accept: "application/json" };
-  const sparams = new URLSearchParams({ db: "pubmed", term: ctx.query, retmode: "json", retmax: String(Math.min(ctx.n, 10)) });
+  const sparams = new URLSearchParams({ db: "pubmed", term: q, retmode: "json", retmax: String(Math.min(ctx.n, 10)) });
   const s1 = await fetchText(`${base}/esearch.fcgi?${sparams}`, { timeout: ctx.timeout, headers });
   if (s1.status !== 200) throw new Error(`esearch HTTP ${s1.status}`);
   const ids = parseJson(s1.body)?.esearchresult?.idlist || [];
@@ -1159,7 +1214,10 @@ async function enginePubMed(ctx) {
 }
 
 async function engineHuggingFace(ctx) {
-  const params = new URLSearchParams({ search: ctx.query, limit: String(Math.min(ctx.n, 10)) });
+  // Vertical engines index English — prefer the extracted ASCII run when
+  // routing supplied one, but never rewrite the general-web query.
+  const q = ctx.intlQuery || ctx.query;
+  const params = new URLSearchParams({ search: q, limit: String(Math.min(ctx.n, 10)) });
   const { status, body } = await retryFetch(`https://huggingface.co/api/models?${params}`, {
     timeout: ctx.timeout, headers: { accept: "application/json" },
   });
@@ -1199,8 +1257,11 @@ async function engineGoogleCse(ctx) {
 // Semantic Scholar Graph API — free, keyless (shared per-IP anonymous pool,
 // often 429 from proxy/datacenter exits); a free S2_API_KEY lifts the limit.
 async function engineSemanticScholar(ctx) {
+  // Vertical engines index English — prefer the extracted ASCII run when
+  // routing supplied one, but never rewrite the general-web query.
+  const q = ctx.intlQuery || ctx.query;
   const p = new URLSearchParams({
-    query: ctx.query, limit: String(Math.min(ctx.n, 10)),
+    query: q, limit: String(Math.min(ctx.n, 10)),
     fields: "title,url,year,venue,citationCount",
   });
   const headers = { accept: "application/json", ...(process.env.S2_API_KEY && { "x-api-key": process.env.S2_API_KEY }) };
@@ -1258,7 +1319,10 @@ async function engineBingNews(ctx) {
 // so this engine is gated on a free GITEE_TOKEN. Routed only when the token
 // exists (see routeAuto) to keep token-less runs noise-free.
 async function engineGitee(ctx) {
-  const p = new URLSearchParams({ q: ctx.query, per_page: String(Math.min(ctx.n, 10)) });
+  // Vertical engines index English — prefer the extracted ASCII run when
+  // routing supplied one, but never rewrite the general-web query.
+  const q = ctx.intlQuery || ctx.query;
+  const p = new URLSearchParams({ q: q, per_page: String(Math.min(ctx.n, 10)) });
   p.set("access_token", process.env.GITEE_TOKEN);
   const { status, body } = await fetchText(`https://gitee.com/api/v5/search/repositories?${p}`, {
     timeout: ctx.timeout, headers: { accept: "application/json" },
@@ -1314,23 +1378,23 @@ const ENGINES = {
   ollama: { fn: engineOllama, key: "OLLAMA_API_KEY" },
   searxng: { fn: engineSearxng, key: "SEARXNG_BASE_URL" },
   // ── Vertical engines (official keyless APIs) — auto tier ──
-  wikipedia: { fn: engineWikipedia, key: null },
+  wikipedia: { fn: engineWikipedia, key: null, auto: true },
   stackexchange: { fn: engineStackExchange, key: null, auto: true },
   github: { fn: engineGithub, key: null, auto: true },
   bingnews: { fn: engineBingNews, key: null, auto: true },
   semanticscholar: { fn: engineSemanticScholar, key: "S2_API_KEY", optionalKey: true, auto: true },
   gitee: { fn: engineGitee, key: "GITEE_TOKEN", auto: true },
-  hn: { fn: engineHn, key: null },
-  juejin: { fn: engineJuejin, key: null },
-  arxiv: { fn: engineArxiv, key: null },
+  hn: { fn: engineHn, key: null, auto: true },
+  juejin: { fn: engineJuejin, key: null, auto: true },
+  arxiv: { fn: engineArxiv, key: null, auto: true },
   mwmbl: { fn: engineMwmbl, key: null },
   // ── Academic / registry (official keyless APIs) — auto tier ──
-  csdn: { fn: engineCSDN, key: null },
-  openalex: { fn: engineOpenAlex, key: null },
-  crossref: { fn: engineCrossref, key: null },
-  pubmed: { fn: enginePubMed, key: null },
+  csdn: { fn: engineCSDN, key: null, auto: true },
+  openalex: { fn: engineOpenAlex, key: null, auto: true },
+  crossref: { fn: engineCrossref, key: null, auto: true },
+  pubmed: { fn: enginePubMed, key: null, auto: true },
   googlecse: { fn: engineGoogleCse, key: "GOOGLE_API_KEY" },
-  huggingface: { fn: engineHuggingFace, key: null },
+  huggingface: { fn: engineHuggingFace, key: null, auto: true },
   // Keyless backup engines: anonymous quotas are low, so they stay OFF by
   // default. Opt in via --engine or the EASY_WEB_SEARCH_ENGINES env var.
   anysearch: { fn: engineAnysearch, key: "ANYSEARCH_API_KEY", optionalKey: true, backup: true },
@@ -1362,9 +1426,13 @@ function routeAuto(query) {
   if (/(stackoverflow|stack\s?exchange|报错|exception|traceback|怎么解决|how to (fix|debug))/.test(q)) add.push("stackexchange");
   if (/(论文|文献|arxiv|学术|research paper|preprint)/.test(q)) add.push("arxiv", "openalex", "crossref", "pubmed", "semanticscholar");
   if (/(新闻|快讯|资讯|breaking news|latest news)/.test(q)) add.push("bingnews");
-  if (/(什么是|百科|维基百科|wikipedia|是谁|who is|history of)/.test(q)) add.push("wikipedia");
+  if (/(什么是|是什么|啥是|是啥|什么意思|百科|维基百科|wikipedia|是谁|who is|history of)/.test(q)) add.push("wikipedia");
   if (/(hacker\s?news|show\s?hn|tech news|科技新闻)/.test(q)) add.push("hn");
-  if (/(掘金|juejin|csdn|前端开发|javascript 教程|vue\b|react\b)/.test(q)) add.push("juejin", "csdn");
+  // Tech-vertical engines: only useful for technical questions, and actively
+  // harmful elsewhere (a medical query returned "React 面试题" and "鸿蒙 Next"
+  // from juejin). Broad but concrete — must fire for "python 虚拟环境", not for
+  // "喝柠檬水能防癌".
+  if (/(编程|代码|程序员|开发者|教程|报错|调试|\bbug\b|算法|面试|框架|源码|数据库|\bsql\b|docker|k8s|kubernetes|linux|\bgit\b|\bapi\b|\bsdk\b|javascript|typescript|python|\bjava\b|golang|\brust\b|\breact\b|\bvue\b|node\.?js|webpack|vite|\bcss\b|\bhtml\b|掘金|juejin|csdn|机器学习|深度学习|大模型|\bllm\b|模型部署|神经网络)/.test(q)) add.push("juejin", "csdn");
   if (/(huggingface|数据集|dataset|模型权重|safetensors)/.test(q)) add.push("huggingface");
   return { engines: add, intlQuery: extractIntlQuery(query) };
 }
@@ -1467,7 +1535,10 @@ async function main() {
     for (const n of routed.engines) {
       if (!engines.includes(n)) engines.push(n);
     }
-    if (routed.engines.length) { ctx.intlQuery = routed.intlQuery; ctx.query = routed.intlQuery; }
+    // Only expose the extracted ASCII run to vertical engines (they opt in via
+    // ctx.intlQuery). Rewriting ctx.query would drop the Chinese half of a
+    // mixed query for every general-web engine.
+    if (routed.engines.length) ctx.intlQuery = routed.intlQuery;
   }
 
   // Skip engines in active cooldown (default selection only; explicit
@@ -1526,17 +1597,26 @@ async function main() {
   }
 
   const allEngines = [...cooldownSkipped, ...statuses];
-  // Demote (never drop) single-engine Chinese hits that share nothing with the
-  // query: they are usually noise, but dropping them would also lose a good
-  // result that happens to use a synonym. Junk sinks to the bottom instead.
-  const ranked = fuse(statuses.filter((s) => s.ok));
-  for (const r of ranked) {
-    if (!ACADEMIC_INTENT.test(ctx.query) && r.engines.every((e) => ACADEMIC_ENGINES.has(e))) {
-      r.score *= 0.5;
-      r.demoted = true;
-    }
+  let ranked = fuse(statuses.filter((s) => s.ok));
+  // --site / --exclude-site are enforced HERE, not only by handing the site:
+  // operator to engines: vertical engines ignore it outright (juejin, csdn,
+  // github...) and bing does not always honour it, so "restrict to domain"
+  // was advisory. Filtering the fused set makes the promise true for every
+  // engine.
+  if (args.site.length || args.excludeSite.length) {
+    const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, "").toLowerCase(); } catch { return ""; } };
+    const norm = (d) => d.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
+    const sites = args.site.map(norm).filter(Boolean);
+    const excluded = args.excludeSite.map(norm).filter(Boolean);
+    const inDomain = (h, d) => h === d || h.endsWith(`.${d}`);
+    ranked = ranked.filter((r) => {
+      const h = hostOf(r.url);
+      if (sites.length && !sites.some((d) => inDomain(h, d))) return false;
+      if (excluded.some((d) => inDomain(h, d))) return false;
+      return true;
+    });
   }
-  const fused = ranked.sort((a, b) => b.score - a.score).slice(0, args.n);
+  const fused = ranked.slice(0, args.n);
 
   if (args.json) {
     console.log(JSON.stringify({
@@ -1545,7 +1625,6 @@ async function main() {
       results: fused.map((r, i) => ({
         rank: i + 1, title: r.title, url: r.url, snippet: r.snippet,
         score: +r.score.toFixed(4), engines: r.engines,
-        ...(r.demoted ? { demoted: true } : {}),
       })),
     }, null, 2));
   } else {

@@ -96,7 +96,9 @@ check "so360 runs (OK, or documented captcha soft-fail)" $?
 node --input-type=module -e "
 import('./scripts/search.mjs').then(({ routeAuto }) => {
   const cases = [
-    ['github 教程', ['github']],
+    // 教程 is a tech signal: Chinese tutorial sites join github for a
+    // tutorial-shaped query (they carry the practical walkthroughs).
+    ['github 教程', ['github', 'juejin', 'csdn']],
     ['论文 写作', ['arxiv', 'openalex', 'crossref', 'pubmed', 'semanticscholar']],
     ['什么是 webgpu', ['wikipedia']],
     ['掘金 教程', ['juejin', 'csdn']],

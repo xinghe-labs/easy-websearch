@@ -146,10 +146,10 @@ Prefer `--json` and parse the output; it includes per-engine status
 (`{name, ok, count, ms, error}`) so you can tell the user exactly what
 happened. Text mode prints results with `[engines]` attribution per hit.
 
-The **default pool is 16 engines**, queried concurrently on every call:
-`ddg bing baidu sogouweb so360 searxng wikipedia hn juejin arxiv mwmbl csdn
-openalex crossref pubmed huggingface`. That breadth is why fusion is good and
-why a call costs a few seconds.
+The **default pool is general web only**, queried concurrently on every call:
+`ddg bing baidu sogouweb so360 searxng mwmbl`. Vertical engines join only on
+matching query intent (see "Interpreting results"). That breadth is why
+fusion is good and why a call costs a few seconds.
 
 Two speeds, pick deliberately:
 
@@ -183,8 +183,6 @@ Do not dump stdout or JSON at the user. Answer in this shape:
 - Point 1 — [source title](url) (confirmed by: ddg+bing)
 - Point 2 — [source title](url) (single source)
 - Point 3 — [source title](url)
-
-> Engine note: ddg was rate-limited (HTTP 202) this run; findings lean on bing.
 ```
 
 - **Answer first**, at most 5 bullets; details after, on request.
@@ -193,8 +191,11 @@ Do not dump stdout or JSON at the user. Answer in this shape:
   domains) / `single source` / `conflicting` (say so explicitly — never pick
   one side and hide the other).
 - A URL returned by several engines in `engines` is stronger — prefer it.
-- **Only mention engine status when something failed or was skipped by
-  cooldown.** All-green runs need no commentary.
+- **Do not append engine status to the answer.** No "engine note" line, no
+  list of which engines failed, no footer. Engine status lives in the `--json`
+  `engines[]` array and is for *your* diagnosis, not for the user's answer.
+  Surface it only when the user asks, or when the failures are why you cannot
+  answer at all (then say it in the answer body, not as a trailing note).
 - "Latest / today" questions → pass `--days` and state the window.
 - Very long content → write a file and give the path; don't pour 20k
   characters into the chat.
@@ -207,6 +208,16 @@ Do not dump stdout or JSON at the user. Answer in this shape:
   this query** (it carries `note: "reachable, no hits for this query"`). That
   is not a failure — don't report it as one, and don't drop the engine from
   your mental model of what was searched.
+- The default pool is **general web only** (`ddg bing baidu sogouweb so360
+  searxng mwmbl`). Vertical engines — `juejin`, `csdn`, `wikipedia`, `hn`,
+  `arxiv`, `openalex`, `crossref`, `pubmed`, `semanticscholar`, `github`,
+  `gitee`, `stackexchange`, `huggingface`, `bingnews` — join only when the
+  query shows the matching intent (tech terms, academic terms, 什么是/百科,
+  repo/源码, ...). That is why a medical question no longer returns React
+  interview posts from a tech blog. `--engine` always overrides the routing.
+- `--site` / `--exclude-site` are enforced on the fused set, so the filter
+  holds for every engine even though vertical engines ignore the `site:`
+  operator internally.
 - A failed engine (e.g. `ddg: FAILED (HTTP 202)`) is normal and non-fatal:
   fusion continues with the rest. Do not retry the whole search because one
   engine failed.
@@ -292,8 +303,9 @@ first-pass answer):
 ```
 
 Read order: `cross_hits` first (that is your confidence ranking) → then only
-the `content_excerpt` fields you actually need → cite `url`. Treat `coverage`
-as the engine note for your answer (e.g. "ddg contributed nothing this run").
+the `content_excerpt` fields you actually need → cite `url`. `coverage` is
+for your own judgement of how thin the evidence is — like engine status, it
+does not go into the answer.
 
 A result carrying `fetch_error` could **not** be read — you have its title and
 snippet only. Never imply you read such a page, and say so if the answer
