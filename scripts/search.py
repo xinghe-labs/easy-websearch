@@ -723,7 +723,23 @@ def _resolve_sogou_links(urls, timeout, base="https://weixin.sogou.com"):
 
 
 def _snippet_after(body: str, from_idx: int, length: int = 200) -> str:
-    return strip_tags(body[from_idx:from_idx + 700])[:length]
+    # The window can cut a tag in half, and sogou embeds thumbnail <img>
+    # markup in result blurbs. Drop image markup and any dangling partial tag
+    # BEFORE stripping, or raw "<img src=..." leaks through.
+    def window_text(n: int) -> str:
+        s = body[from_idx:from_idx + n]
+        nxt = re.search(r"<h3\b", s, re.IGNORECASE)  # never bleed into next result
+        if nxt and nxt.start() > 0:
+            s = s[:nxt.start()]
+        s = re.sub(r"<img\b[^>]*>", " ", s, flags=re.IGNORECASE)
+        s = re.sub(r"<[^>]*$", " ", s)
+        return strip_tags(s)
+
+    text = window_text(700)
+    # A blurb that is mostly thumbnail leaves nothing behind — look wider.
+    if len(text) < 20:
+        text = window_text(1600)
+    return text[:length]
 
 
 def _resolve_so360_links(urls, timeout):
@@ -1521,6 +1537,12 @@ def main():
             dirty = True
     if dirty and not args.no_cooldown:
         _save_cooldowns(state)
+
+    # "ok but zero hits" is not a failure. Label it so a caller never
+    # mistakes an idle engine for a broken one.
+    for s in statuses:
+        if s["ok"] and s["count"] == 0:
+            s["note"] = "reachable, no hits for this query"
 
     # --days is not supported by every engine — say so instead of silently
     # ignoring it.

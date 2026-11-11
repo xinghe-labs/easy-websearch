@@ -778,8 +778,19 @@ async function resolveSogouLinks(urls, timeout, base = "https://weixin.sogou.com
 
 // Extract a text snippet from the body right after a result anchor's match.
 function snippetAfter(body, from, len = 200) {
-  const chunk = body.slice(from, from + 700);
-  const text = stripTags(chunk);
+  // The window can cut a tag in half, and sogou puts thumbnail <img> markup
+  // inside result blurbs. Drop image markup and any dangling partial tag
+  // BEFORE stripping, otherwise raw "<img src=..." leaks into the snippet
+  // and from there into the agent's answer.
+  const windowText = (n) => {
+    let s = body.slice(from, from + n);
+    const next = s.search(/<h3\b/i); // never bleed into the next result
+    if (next > 0) s = s.slice(0, next);
+    return stripTags(s.replace(/<img\b[^>]*>/gi, " ").replace(/<[^>]*$/, " "));
+  };
+  let text = windowText(700);
+  // A blurb that is mostly thumbnail leaves nothing behind — look wider.
+  if (text.length < 20) text = windowText(1600);
   return text.slice(0, len);
 }
 
@@ -1484,6 +1495,12 @@ async function main() {
     }
   }
   if (dirty && !args.noCooldown) saveCooldowns(state);
+
+  // "ok but zero hits" is not a failure. Label it so a caller never mistakes
+  // an idle engine for a broken one.
+  for (const s of statuses) {
+    if (s.ok && s.count === 0) s.note = "reachable, no hits for this query";
+  }
 
   // --days is not supported by every engine — say so instead of silently
   // ignoring it.
