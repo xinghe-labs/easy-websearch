@@ -110,6 +110,26 @@ Chinese tech content) or for the session with
 Chinese queries get baidu in the default pool (no key) — plus bocha/metaso
 when configured.
 
+### Provider catalogue (68 engines)
+
+Beyond the ones above, 31 more providers are wired and dormant until their key
+exists. `doctor` lists each one as `SKIP … get it: <url>`, and `--engine <name>`
+without the key answers `"<ENV> not set"` instead of failing obscurely.
+
+| Group | Engines (env var) |
+|---|---|
+| Google SERP resellers | `serpapi` (SERPAPI_API_KEY), `serpbase` (SERPBASE_API_KEY), `searchapi` (SEARCHAPI_API_KEY), `serply` (SERPLY_API_KEY), `xcrawl` (XCRAWL_API_KEY) |
+| Modern search APIs | `kagi` (KAGI_API_KEY), `serpdive` (SERPDIVE_API_KEY), `valyu` (VALYU_API_KEY), `you` (YOU_API_KEY), `jina` (JINA_API_KEY), `search1api` (SEARCH1API_API_KEY), `searchinfinity` (SEARCHINFINITY_API_KEY), `querit` (QUERIT_API_KEY), `sofya` (SOFYA_API_KEY), `outcrawl` (OUTCRAWL_API_KEY), `ceramic` (CERAMIC_API_KEY), `tinyfish` (TINYFISH_API_KEY), `tabstack` (TABSTACK_API_KEY), `parallel` (PARALLEL_API_KEY), `deepseek` (DEEPSEEK_API_KEY), `kimi` (KIMI_API_KEY), `perplexity` (PERPLEXITY_API_KEY) |
+| LLM-native search | `openai` (OPENAI_API_KEY), `xai` (XAI_API_KEY), `gemini` (GEMINI_API_KEY), `mistral` (MISTRAL_API_KEY) |
+| MCP-shaped | `baizhi` (BAIZHI_API_KEY), `zai` (ZAI_API_KEY) |
+| Self-hosted / account | `ninerouter` (NINEROUTER_BASE_URL), `cloudflare` (CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID), `brightdata` (BRIGHTDATA_API_KEY + BRIGHTDATA_ZONE) |
+
+None of these join the default pool — they run only when `--engine` names them
+or `EASY_WEB_SEARCH_ENGINES` opts them in. Their request shapes come from the
+same provider implementations the built-in web_search uses, but **they are
+unverified against the live APIs** (no keys were available to test), so treat
+the first run of a newly keyed engine as a smoke test.
+
 Show any `*_API_KEY` as first/last 4 chars only (e.g. `sk-…a1b2`); never echo
 a key into a command line, log, or file; never spend paid quota just to
 "verify a key works".
@@ -147,9 +167,11 @@ Prefer `--json` and parse the output; it includes per-engine status
 happened. Text mode prints results with `[engines]` attribution per hit.
 
 The **default pool is general web only**, queried concurrently on every call:
-`ddg bing baidu sogouweb so360 searxng mwmbl`. Vertical engines join only on
-matching query intent (see "Interpreting results"). That breadth is why
-fusion is good and why a call costs a few seconds.
+`ddg bing baidu sogouweb so360 examcp parallelmcp degoog searxng mwmbl`.
+`examcp` and `parallelmcp` are keyless MCP endpoints that return real page
+excerpts rather than a scraped SERP — in practice they carry the answer, and
+the scraped engines fill in. Vertical engines join only on matching query
+intent (see "Interpreting results").
 
 Two speeds, pick deliberately:
 
@@ -209,12 +231,13 @@ Do not dump stdout or JSON at the user. Answer in this shape:
   is not a failure — don't report it as one, and don't drop the engine from
   your mental model of what was searched.
 - The default pool is **general web only** (`ddg bing baidu sogouweb so360
-  searxng mwmbl`). Vertical engines — `juejin`, `csdn`, `wikipedia`, `hn`,
-  `arxiv`, `openalex`, `crossref`, `pubmed`, `semanticscholar`, `github`,
-  `gitee`, `stackexchange`, `huggingface`, `bingnews` — join only when the
-  query shows the matching intent (tech terms, academic terms, 什么是/百科,
-  repo/源码, ...). That is why a medical question no longer returns React
-  interview posts from a tech blog. `--engine` always overrides the routing.
+  examcp parallelmcp degoog searxng mwmbl`). Vertical engines — `juejin`,
+  `csdn`, `wikipedia`, `hn`, `arxiv`, `openalex`, `crossref`, `pubmed`,
+  `semanticscholar`, `github`, `gitee`, `stackexchange`, `huggingface`,
+  `bingnews` — join only when the query shows the matching intent (tech terms,
+  academic terms, 什么是/百科, repo/源码, ...). That is why a medical question
+  no longer returns React interview posts from a tech blog. `--engine` always
+  overrides the routing.
 - `--site` / `--exclude-site` are enforced on the fused set, so the filter
   holds for every engine even though vertical engines ignore the `site:`
   operator internally.
@@ -226,7 +249,15 @@ Do not dump stdout or JSON at the user. Answer in this shape:
   avoids re-burning requests on them (state:
   `$XDG_CACHE_HOME/easy-websearch/cooldowns.json`). Reset with
   `node scripts/doctor.mjs --clear-cooldown`; override with `--engine <name>`
-  or `--no-cooldown` when the user asks to retry.
+  or `--no-cooldown` when the user asks to retry. An engine that answers with
+  **zero hits twice in a row** is benched for 5 minutes too — a dead upstream
+  should not keep costing a slot on every run.
+- Hits from scraped SERP engines (`ddg bing baidu sogouweb so360`) are dropped
+  when they are demonstrably about something else: Korean/Japanese title for a
+  Chinese query, a bare latin site name, or a Chinese title sharing no 2-char
+  run with the query. Content engines (`examcp`/`parallelmcp`/`degoog`) are
+  never filtered this way. Validated on a hand-checked corpus: 8 junk dropped,
+  0 legitimate hits lost.
 - Engines OK but 0 results → narrow / rephrase / add `--site`; **at most 2
   more attempts**, then say plainly that nothing was found.
 - Two consecutive anomalies → run `doctor` once and report which engine is

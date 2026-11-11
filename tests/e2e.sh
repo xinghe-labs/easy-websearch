@@ -293,6 +293,38 @@ import('./scripts/search.mjs').then(({ looksLikeJunk }) => {
   if (looksLikeJunk(good, 'webgpu') !== false) process.exit(1);
 });"; check "bing junk detector (synthetic)" $?
 
+# --- per-result junk filter (scraped SERP only; content engines exempt) ---
+node --input-type=module -e "
+import('./scripts/search.mjs').then(({ isOffTopicScrapedHit: f }) => {
+  const cases = [
+    [{engines:['bing'], title:'ㅋㅋㅋ avop 069 자막'}, '喝柠檬水能防癌', true],
+    [{engines:['bing'], title:'Web of Science'}, '大模型 本地部署 显存 需求', true],
+    [{engines:['bing'], title:'DVDMS-705松本一香作品'}, '如何 备份 手机 照片', true],
+    [{engines:['bing'], title:'Rust 程序设计语言'}, 'rust async runtime', false],
+    [{engines:['bing'], title:'大模型本地部署显存需求'}, '大模型 本地部署 显存 需求', false],
+    [{engines:['examcp'], title:'Web of Science'}, '大模型 本地部署', false],
+  ];
+  for (const [r, q, want] of cases) {
+    if (f(r, q) !== want) { console.error('mismatch', r.title, q, want); process.exit(1); }
+  }
+});"
+check "per-result junk filter (synthetic)" $?
+
+if command -v python3 >/dev/null 2>&1; then
+  python3 -c "
+import sys; sys.path.insert(0, 'scripts')
+from search import _is_off_topic_scraped_hit as f
+cases = [
+    ({'engines':['bing'],'title':'ㅋㅋㅋ avop 069 자막'}, '喝柠檬水能防癌', True),
+    ({'engines':['bing'],'title':'Web of Science'}, '大模型 本地部署 显存 需求', True),
+    ({'engines':['bing'],'title':'Rust 程序设计语言'}, 'rust async runtime', False),
+    ({'engines':['examcp'],'title':'Web of Science'}, '大模型 本地部署', False),
+]
+for r, q, want in cases:
+    assert f(r, q) is want, (r, q, want)"
+  check "py per-result junk filter (synthetic)" $?
+fi
+
 if command -v python3 >/dev/null 2>&1; then
   python3 -c "
 import sys; sys.path.insert(0, 'scripts')

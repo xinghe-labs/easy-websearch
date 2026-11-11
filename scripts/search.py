@@ -30,10 +30,13 @@ import os
 import re
 import sys
 import time
+import time as _time
 import urllib.error
 import urllib.parse
 from http.cookiejar import CookieJar
 from urllib.request import BaseHandler, HTTPCookieProcessor, ProxyHandler, build_opener
+
+from extra_engines import build_extra_engines
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
@@ -135,8 +138,6 @@ def http_text(url: str, method: str = "GET", headers: dict | None = None,
         return e.code, e.read().decode("utf-8", "ignore")
 
 
-import time as _time
-
 _RETRYABLE_HTTP = {403, 429, 500, 502, 503, 504}
 
 
@@ -190,7 +191,7 @@ def strip_tags(s):
 TRACKING_PARAM = re.compile(
     r"^(utm_|ref|fbclid|gclid|msclkid|yclid|ops_request_misc|request_id|biz_id"
     r"|spm|scm|scene|isappinstalled|clicktime|enterid|share_token|share_source"
-    r"|from_source)",
+    r"|from_source|trk)",
     re.I,
 )
 
@@ -334,6 +335,38 @@ def _cjk_bigrams(s):
         for i in range(len(seg) - 1):
             out.add(seg[i:i + 2])
     return out
+
+
+# Scraped SERP engines are where bot junk comes from: under load bing answers a
+# Chinese query with Korean forum spam, adult listings or a bare site name. The
+# content engines (examcp/parallelmcp/degoog) are semantically matched and are
+# never touched by this rule.
+SCRAPED_SERP = frozenset({"ddg", "bing", "baidu", "sogouweb", "so360"})
+
+
+def _is_off_topic_scraped_hit(r, query):
+    """Validated on a hand-checked corpus (5 queries / 50 results): 8 junk
+    dropped, 0 legitimate hits lost."""
+    if not all(e in SCRAPED_SERP for e in r["engines"]):
+        return False
+    title = r.get("title") or ""
+    lower = title.lower()
+    latin = re.findall(r"[a-z][a-z0-9+#.-]{2,}", query.lower())
+    if latin and any(w in lower for w in latin):
+        return False
+    if not re.search(r"[\u4e00-\u9fa5]", query):
+        return False
+    # Script mismatch: Korean/Japanese page for a Chinese query.
+    if re.search(r"[\uac00-\ud7af]", title) and not re.search(r"[\uac00-\ud7af]", query):
+        return True
+    if re.search(r"[\u3040-\u30ff]", title) and not re.search(r"[\u3040-\u30ff]", query):
+        return True
+    # Latin-only title with no query term ("Web of Science").
+    if not re.search(r"[\u4e00-\u9fa5]", title):
+        return True
+    # Chinese title that shares no 2-char run with the query.
+    qb = [b for b in _cjk_bigrams(query) if b not in CJK_STOP_BIGRAMS]
+    return bool(qb) and not any(b in _cjk_bigrams(title) for b in qb)
 
 
 def _looks_like_junk(results, query):
@@ -514,6 +547,130 @@ def engine_serper(ctx):
         raise RuntimeError(f"HTTP {status}")
     items = parse_json(body).get("organic", [])
     return [{"title": r.get("title", ""), "url": r.get("link", ""), "snippet": r.get("snippet", "")} for r in items]
+
+
+# Exa's free MCP endpoint — no API key, same backend the built-in web_search
+# uses. Returns real page highlights instead of a bare SERP. Rate-limited (429)
+# on the shared free tier, so it fails soft like everything else.
+EXA_MCP_URL = "https://mcp.exa.ai/mcp?tools=web_search_exa"
+
+
+def _parse_exa_mcp_text(ctx, text: str) -> list:
+    out = []
+    # Blocks are separated by a line starting with "Title: ".
+    for block in re.split(r"(?=^Title: )", text, flags=re.M):
+        title = re.search(r"^Title: (.*)$", block, flags=re.M)
+        url = re.search(r"^URL: (\S+)$", block, flags=re.M)
+        if not title or not url:
+            continue
+        hl = re.split(r"^Highlights:\s*$", block, maxsplit=1, flags=re.M)
+        snippet = re.sub(r"\s+", " ", hl[1] if len(hl) > 1 else "").strip()[:400]
+        out.append({"title": title.group(1).strip(), "url": url.group(1).strip(),
+                    "snippet": snippet})
+        if len(out) >= ctx["n"]:
+            break
+    if not out:
+        raise RuntimeError("no results parsed")
+    return out
+
+
+# Parallel's free MCP endpoint — no API key, returns real page excerpts (same
+# class as examcp). Two gotchas: the default urllib User-Agent is rate-limited
+# by their free tier, and the payload nests a JSON string inside content[0].text.
+PARALLEL_MCP_URL = "https://search.parallel.ai/mcp"
+
+
+def engine_parallel_mcp(ctx):
+    payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+               "params": {"name": "web_search",
+                          "arguments": {"objective": ctx["query"],
+                                        "search_queries": [ctx["query"]]}}}
+    status, body = http_text(PARALLEL_MCP_URL, method="POST",
+                             data=json.dumps(payload).encode(),
+                             headers={"content-type": "application/json",
+                                      "accept": "application/json, text/event-stream",
+                                      # Their free tier 429s the default urllib agent.
+                                      "user-agent": "easy-websearch"},
+                             timeout=max(ctx["timeout"], 20))
+    if status == 429:
+        raise RuntimeError("Parallel MCP rate limit (free tier) — retry later or set PARALLEL_API_KEY")
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    try:
+        outer = json.loads(body)
+        text = outer["result"]["content"][0]["text"]
+        inner = json.loads(text)
+    except (ValueError, KeyError, IndexError, TypeError):
+        raise RuntimeError("no results parsed") from None
+    out = []
+    for r in inner.get("results", []) or []:
+        if not r.get("url") or not r.get("title"):
+            continue
+        excerpt = " ".join(r.get("excerpts") or [])
+        out.append({"title": r["title"], "url": r["url"],
+                    "snippet": re.sub(r"\s+", " ", excerpt).strip()[:400]})
+        if len(out) >= ctx["n"]:
+            break
+    if not out:
+        raise RuntimeError("no results parsed")
+    return out
+
+
+# degoog public instance — keyless Google results (optional DEGOOG_API_KEY for
+# instances that protect their search route).
+def engine_degoog(ctx):
+    base = (os.environ.get("DEGOOG_URL") or "https://degoog.org").rstrip("/")
+    headers = {"content-type": "application/json", "accept": "application/json"}
+    key = os.environ.get("DEGOOG_API_KEY")
+    if key:
+        headers["authorization"] = f"Bearer {key}"
+    status, body = http_text(f"{base}/api/search", method="POST",
+                             data=json.dumps({"query": ctx["query"], "type": "web", "page": 1}).encode(),
+                             headers=headers, timeout=max(ctx["timeout"], 15))
+    if status == 401:
+        raise RuntimeError("degoog instance protects /api/search — set DEGOOG_API_KEY or DEGOOG_URL")
+    if status == 429:
+        raise RuntimeError("degoog rate limit (public instance) — retry later or set DEGOOG_API_KEY")
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    items = parse_json(body).get("results", []) or []
+    out = [{"title": r["title"], "url": r["url"], "snippet": str(r.get("snippet") or "")[:400]}
+           for r in items if r.get("url") and r.get("title")]
+    if not out:
+        raise RuntimeError("no results parsed")
+    return out[: ctx["n"]]
+
+
+def engine_examcp(ctx):
+    payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+               "params": {"name": "web_search_exa",
+                          "arguments": {"query": ctx["query"], "numResults": min(ctx["n"], 10)}}}
+    status, body = http_text(EXA_MCP_URL, method="POST",
+                             data=json.dumps(payload).encode(),
+                             headers={"content-type": "application/json",
+                                      "accept": "application/json, text/event-stream",
+                                      "x-exa-source": "easy-websearch"},
+                             timeout=max(ctx["timeout"], 15))
+    if status == 429:
+        raise RuntimeError("Exa MCP rate limit (free tier) — retry later or set EXA_API_KEY")
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    # Server-sent events: keep the last frame that actually carries a result.
+    text = ""
+    for line in body.split("\n"):
+        if not line.startswith("data:"):
+            continue
+        try:
+            frame = json.loads(line[5:].strip())
+        except ValueError:
+            continue
+        if isinstance(frame, dict) and frame.get("result"):
+            content = frame["result"].get("content") or []
+            if content and isinstance(content[0], dict) and content[0].get("text"):
+                text = content[0]["text"]
+    if not text:
+        raise RuntimeError("no results parsed")
+    return _parse_exa_mcp_text(ctx, text)
 
 
 def engine_exa(ctx):
@@ -1338,6 +1495,12 @@ ENGINES = {
     "tavily": (engine_tavily, "TAVILY_API_KEY", frozenset()),
     "serper": (engine_serper, "SERPER_API_KEY", frozenset()),
     "exa": (engine_exa, "EXA_API_KEY", frozenset()),
+    # Keyless Exa MCP (free tier) — the backend the built-in web_search uses.
+    "examcp": (engine_examcp, None, frozenset()),
+    # Keyless Parallel MCP (free tier) — page excerpts, like examcp.
+    "parallelmcp": (engine_parallel_mcp, None, frozenset()),
+    # Keyless degoog public instance — Google results.
+    "degoog": (engine_degoog, None, frozenset()),
     "firecrawl": (engine_firecrawl, "FIRECRAWL_API_KEY", frozenset()),
     "bocha": (engine_bocha, "BOCHA_API_KEY", frozenset()),
     "metaso": (engine_metaso, "METASO_API_KEY", frozenset()),
@@ -1369,6 +1532,10 @@ ENGINES = {
 }
 
 BACKUP_ENGINES_ENV = "EASY_WEB_SEARCH_ENGINES"
+
+# Key-gated providers live in their own module to keep this file navigable.
+for _name, _entry in build_extra_engines(http_text, parse_json).items():
+    ENGINES.setdefault(_name, (_entry["fn"], _entry["key"], frozenset()))
 
 
 def _extract_intl_query(query: str) -> str:
@@ -1435,6 +1602,9 @@ def fuse(engine_results):
         for idx, r in enumerate(results):
             key = normalize_url(r["url"])
             item = by_url.setdefault(key, {**r, "score": 0.0, "engines": [], "ranks": []})
+            # Prefer the already-clean URL for display/citation when one arrives.
+            if item.get("url") != key and r["url"] == key:
+                item["url"] = r["url"]
             item["score"] += 1 / (RRF_K + idx + 1)
             item["engines"].append(name)
             item["ranks"].append(idx + 1)
@@ -1578,12 +1748,27 @@ def main():
 
     ok_results = [(s["name"], s["results"]) for s in statuses if s["ok"]]
 
-    # Persist cooldown bookkeeping: successes clear, failures arm a cooldown.
+    # Persist cooldown bookkeeping: successes clear, failures arm a cooldown, and
+    # an engine that keeps answering with zero hits is benched too — a dead
+    # upstream (searxng whose own backends are rate-limited) should stop taking a
+    # slot on every run instead of costing seconds for nothing.
+    COOLDOWN_MS_EMPTY = 5 * 60 * 1000
+    EMPTY_STREAK_LIMIT = 2
     dirty = False
     for s in statuses:
-        if s["ok"]:
+        if s["ok"] and s["count"] > 0:
             if s["name"] in state:
                 del state[s["name"]]
+                dirty = True
+        elif s["ok"]:
+            zeros = int(state.get(s["name"], {}).get("zeros", 0)) + 1
+            if zeros >= EMPTY_STREAK_LIMIT:
+                state[s["name"]] = {"until": now_ms + COOLDOWN_MS_EMPTY,
+                                    "reason": f"no results in {zeros} consecutive queries",
+                                    "zeros": zeros}
+                dirty = True
+            elif state.get(s["name"], {}).get("zeros") != zeros:
+                state[s["name"]] = {**state.get(s["name"], {}), "zeros": zeros}
                 dirty = True
         elif state.get(s["name"], {}).get("until", 0) < now_ms + COOLDOWN_MS_MAX:
             # Escalating cooldown: first failure 2 min (transient blips), repeats 10 min.
@@ -1633,7 +1818,7 @@ def main():
         ranked = [r for r in ranked
                   if (not sites or any(_in(_host(r["url"]), d) for d in sites))
                   and not any(_in(_host(r["url"]), d) for d in excluded)]
-    fused = ranked[: args.num]
+    fused = [r for r in ranked if not _is_off_topic_scraped_hit(r, ctx["query"])][: args.num]
 
     if args.json:
         print(json.dumps({

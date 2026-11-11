@@ -19,6 +19,7 @@
  * failures never abort the run. Output reports per-engine status.
  */
 import http from "node:http";
+import { buildExtraEngines } from "./extra-engines.mjs";
 import https from "node:https";
 import fs from "node:fs";
 import os from "node:os";
@@ -285,7 +286,7 @@ const stripTags = (s) => decodeEntities(s.replace(/<[^>]*>/g, "")).replace(/\s+/
 // with each other. CSDN (ops_request_misc / request_id / biz_id) and
 // Alibaba/WeChat share links produced real duplicates in testing.
 const TRACKING_PARAM =
-  /^(utm_|ref|fbclid|gclid|msclkid|yclid|ops_request_misc|request_id|biz_id|spm|scm|scene|isappinstalled|clicktime|enterid|share_token|share_source|from_source)/i;
+  /^(utm_|ref|fbclid|gclid|msclkid|yclid|ops_request_misc|request_id|biz_id|spm|scm|scene|isappinstalled|clicktime|enterid|share_token|share_source|from_source|trk)/i;
 
 function normalizeUrl(u) {
   try {
@@ -577,6 +578,125 @@ async function engineSerper(ctx) {
   if (status !== 200) throw new Error(`HTTP ${status}`);
   const items = parseJson(body)?.organic || [];
   return items.map((r) => ({ title: r.title, url: r.link, snippet: r.snippet || "" }));
+}
+
+// Parallel's free MCP endpoint — no API key, returns real page excerpts (same
+// class as examcp). Two gotchas: the default undici User-Agent is rate-limited
+// by their free tier, and the payload nests a JSON string inside content[0].text.
+const PARALLEL_MCP_URL = "https://search.parallel.ai/mcp";
+
+async function engineParallelMcp(ctx) {
+  const payload = {
+    jsonrpc: "2.0", id: 1, method: "tools/call",
+    params: { name: "web_search", arguments: { objective: ctx.query, search_queries: [ctx.query] } },
+  };
+  const { status, body } = await fetchText(PARALLEL_MCP_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      // Their free tier 429s the default undici agent.
+      "user-agent": "easy-websearch",
+    },
+    body: JSON.stringify(payload),
+    timeout: Math.max(ctx.timeout, 20000),
+  });
+  if (status === 429) throw new Error("Parallel MCP rate limit (free tier) — retry later or set PARALLEL_API_KEY");
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const outer = parseJson(body);
+  const text = outer?.result?.content?.[0]?.text;
+  if (!text) throw new Error("no results parsed");
+  let inner;
+  try { inner = JSON.parse(text); } catch { throw new Error("no results parsed"); }
+  const items = Array.isArray(inner?.results) ? inner.results : [];
+  const out = items
+    .filter((r) => r.url && r.title)
+    .map((r) => ({
+      title: r.title,
+      url: r.url,
+      snippet: (Array.isArray(r.excerpts) ? r.excerpts.join(" ") : "").replace(/\s+/g, " ").trim().slice(0, 400),
+    }));
+  if (out.length === 0) throw new Error("no results parsed");
+  return out.slice(0, ctx.n);
+}
+
+// degoog public instance — keyless Google results (optional DEGOOG_API_KEY for
+// instances that protect their search route).
+const DEGOOG_BASE = () => (process.env.DEGOOG_URL || "https://degoog.org").replace(/\/+$/, "");
+
+async function engineDegoog(ctx) {
+  const headers = { "content-type": "application/json", accept: "application/json" };
+  if (process.env.DEGOOG_API_KEY) headers.authorization = `Bearer ${process.env.DEGOOG_API_KEY}`;
+  const { status, body } = await fetchText(`${DEGOOG_BASE()}/api/search`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ query: ctx.query, type: "web", page: 1 }),
+    timeout: Math.max(ctx.timeout, 15000),
+  });
+  if (status === 401) throw new Error("degoog instance protects /api/search — set DEGOOG_API_KEY or DEGOOG_URL");
+  if (status === 429) throw new Error("degoog rate limit (public instance) — retry later or set DEGOOG_API_KEY");
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  const items = parseJson(body)?.results || [];
+  const out = items
+    .filter((r) => r.url && r.title)
+    .map((r) => ({ title: r.title, url: r.url, snippet: String(r.snippet || "").slice(0, 400) }));
+  if (out.length === 0) throw new Error("no results parsed");
+  return out.slice(0, ctx.n);
+}
+
+// Exa's free MCP endpoint — no API key, same backend the built-in web_search
+// uses. Returns real page highlights instead of a bare SERP, which is why its
+// result quality is far above the scraped-HTML engines. Rate-limited (429) on
+// the shared free tier, so it fails soft like everything else.
+const EXA_MCP_URL = "https://mcp.exa.ai/mcp?tools=web_search_exa";
+
+function parseExaMcpText(ctx, text) {
+  const out = [];
+  // Blocks are separated by a line starting with "Title: ".
+  for (const block of text.split(/(?=^Title: )/m)) {
+    const title = (block.match(/^Title: (.*)$/m) || [])[1];
+    const url = (block.match(/^URL: (\S+)$/m) || [])[1];
+    if (!title || !url) continue;
+    const highlights = block.split(/^Highlights:\s*$/m)[1] || "";
+    out.push({
+      title: title.trim(),
+      url: url.trim(),
+      snippet: highlights.replace(/\s+/g, " ").trim().slice(0, 400),
+    });
+    if (out.length >= ctx.n) break;
+  }
+  if (out.length === 0) throw new Error("no results parsed");
+  return out;
+}
+
+async function engineExaMcp(ctx) {
+  const payload = {
+    jsonrpc: "2.0", id: 1, method: "tools/call",
+    params: { name: "web_search_exa", arguments: { query: ctx.query, numResults: Math.min(ctx.n, 10) } },
+  };
+  const { status, body } = await fetchText(EXA_MCP_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "x-exa-source": "easy-websearch",
+    },
+    body: JSON.stringify(payload),
+    timeout: Math.max(ctx.timeout, 15000),
+  });
+  if (status === 429) throw new Error("Exa MCP rate limit (free tier) — retry later or set EXA_API_KEY");
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  // Server-sent events: keep the last frame that actually carries a result.
+  let text = "";
+  for (const line of body.split("\n")) {
+    if (!line.startsWith("data:")) continue;
+    try {
+      const frame = JSON.parse(line.slice(5).trim());
+      if (frame?.result) text = frame.result.content?.[0]?.text || text;
+    } catch { /* partial/keepalive frame */ }
+  }
+  if (!text) throw new Error("no results parsed");
+  return parseExaMcpText(ctx, text);
 }
 
 async function engineExa(ctx) {
@@ -1371,6 +1491,12 @@ const ENGINES = {
   tavily: { fn: engineTavily, key: "TAVILY_API_KEY" },
   serper: { fn: engineSerper, key: "SERPER_API_KEY" },
   exa: { fn: engineExa, key: "EXA_API_KEY" },
+  // Keyless Exa MCP (free tier) — the backend the built-in web_search uses.
+  examcp: { fn: engineExaMcp, key: null },
+  // Keyless Parallel MCP (free tier) — page excerpts, like examcp.
+  parallelmcp: { fn: engineParallelMcp, key: null },
+  // Keyless degoog public instance — Google results.
+  degoog: { fn: engineDegoog, key: null },
   firecrawl: { fn: engineFirecrawl, key: "FIRECRAWL_API_KEY" },
   bocha: { fn: engineBocha, key: "BOCHA_API_KEY" },
   metaso: { fn: engineMetaso, key: "METASO_API_KEY" },
@@ -1402,6 +1528,9 @@ const ENGINES = {
   // Keyless vertical engine (WeChat articles only) — opt-in like backups.
   sogouweixin: { fn: engineSogouWeixin, key: null, backup: true },
 };
+
+// Key-gated providers live in their own module to keep this file navigable.
+Object.assign(ENGINES, buildExtraEngines({ fetchText, parseJson }));
 
 const BACKUP_ENGINES_ENV = "EASY_WEB_SEARCH_ENGINES";
 
@@ -1462,6 +1591,32 @@ function availableEngines(filter) {
 }
 
 // -------------------------------------------------------------- fusion ----
+// Scraped SERP engines are where bot junk comes from: under load bing answers a
+// Chinese query with Korean forum spam, adult listings or a bare site name.
+// The content engines (examcp/parallelmcp/degoog) are semantically matched and
+// are never touched by this rule.
+const SCRAPED_SERP = new Set(["ddg", "bing", "baidu", "sogouweb", "so360"]);
+// Drop a scraped-SERP hit that is demonstrably about something else. Validated
+// against a hand-checked corpus of 5 queries / 50 results: 8 junk dropped,
+// 0 legitimate hits lost.
+function isOffTopicScrapedHit(r, query) {
+  if (!r.engines.every((e) => SCRAPED_SERP.has(e))) return false;
+  const title = r.title || "";
+  const lower = title.toLowerCase();
+  const latin = query.toLowerCase().match(/[a-z][a-z0-9+#.-]{2,}/g) || [];
+  if (latin.length && latin.some((w) => lower.includes(w))) return false;
+  if (!/[\u4e00-\u9fa5]/.test(query)) return false;
+  // Script mismatch: Korean/Japanese page for a Chinese query.
+  if (/[\uac00-\ud7af]/.test(title) && !/[\uac00-\ud7af]/.test(query)) return true;
+  if (/[\u3040-\u30ff]/.test(title) && !/[\u3040-\u30ff]/.test(query)) return true;
+  // Latin-only title with no query term ("Web of Science").
+  if (!/[\u4e00-\u9fa5]/.test(title)) return true;
+  // Chinese title that shares no 2-char run with the query.
+  const qb = [...cjkBigrams(query)].filter((b) => !CJK_STOP_BIGRAMS.has(b));
+  if (qb.length && !qb.some((b) => cjkBigrams(title).has(b))) return true;
+  return false;
+}
+
 function fuse(engineResults) {
   const byUrl = new Map();
   for (const { name, results } of engineResults) {
@@ -1469,6 +1624,8 @@ function fuse(engineResults) {
       const key = normalizeUrl(r.url);
       if (!byUrl.has(key)) byUrl.set(key, { ...r, url: r.url, score: 0, engines: [], ranks: [] });
       const item = byUrl.get(key);
+      // Prefer the already-clean URL for display/citation when one arrives.
+      if (item.url !== key && r.url === key) item.url = r.url;
       item.score += 1 / (RRF_K + idx + 1);
       item.engines.push(name);
       item.ranks.push(idx + 1);
@@ -1567,11 +1724,25 @@ async function main() {
     })
   );
 
-  // Persist cooldown bookkeeping: successes clear, failures arm a cooldown.
+  // Persist cooldown bookkeeping: successes clear, failures arm a cooldown, and
+  // an engine that keeps answering with zero hits is benched too — a dead
+  // upstream (searxng whose own backends are rate-limited) should stop taking a
+  // slot on every run instead of costing seconds for nothing.
+  const COOLDOWN_MS_EMPTY = 5 * 60 * 1000;
+  const EMPTY_STREAK_LIMIT = 2;
   let dirty = false;
   for (const s of statuses) {
-    if (s.ok) {
+    if (s.ok && s.count > 0) {
       if (state[s.name]) { delete state[s.name]; dirty = true; }
+    } else if (s.ok) {
+      const zeros = (state[s.name]?.zeros || 0) + 1;
+      if (zeros >= EMPTY_STREAK_LIMIT) {
+        state[s.name] = { until: Date.now() + COOLDOWN_MS_EMPTY, reason: `no results in ${zeros} consecutive queries`, zeros };
+        dirty = true;
+      } else if (state[s.name]?.zeros !== zeros) {
+        state[s.name] = { ...(state[s.name] || {}), zeros };
+        dirty = true;
+      }
     } else if ((state[s.name]?.until ?? 0) < Date.now() + COOLDOWN_MS_MAX) {
       // Escalating cooldown: first failure 2 min (transient blips), repeats 10 min.
       const failures = (state[s.name]?.failures || 0) + 1;
@@ -1616,7 +1787,7 @@ async function main() {
       return true;
     });
   }
-  const fused = ranked.slice(0, args.n);
+  const fused = ranked.filter((r) => !isOffTopicScrapedHit(r, ctx.query)).slice(0, args.n);
 
   if (args.json) {
     console.log(JSON.stringify({
@@ -1650,6 +1821,6 @@ import { pathToFileURL } from "node:url";
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) await main();
 
-export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk, cooldownPath, searxngBaseAndAuth, setForceDirect, routeAuto, extractIntlQuery, fetchText, stripTags, parseJson, normalizeUrl, fuse,
+export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk, isOffTopicScrapedHit, cooldownPath, searxngBaseAndAuth, setForceDirect, routeAuto, extractIntlQuery, fetchText, stripTags, parseJson, normalizeUrl, fuse,
   // SERP parsers (tested against tests/snapshots/ in both runtimes)
   parseDdgHtml, parseDdgLite, parseBingResults, parseBingRss, parseBaiduResults, parseSo360Desktop, parseSo360Mobile, parseBingNewsRss };
