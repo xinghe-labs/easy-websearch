@@ -138,6 +138,7 @@ Options:
 | `--lang zh` | language/region boost: `zh` or `en` |
 | `--engine ddg,bing` | restrict/enable engines (backups `anysearch`,`keenable` need this or `EASY_WEB_SEARCH_ENGINES`) |
 | `--timeout 8` | per-**attempt** timeout in seconds; engines that rotate endpoint variants (bing, baidu, so360) can take a multiple of this before they give up |
+| `--direct` | bypass the proxy for every engine (`EASY_WEB_SEARCH_DIRECT=1` does the same for the whole session). Use it when doctor reports several scrape engines failing behind a proxy — see Troubleshooting below |
 | `--no-cooldown` | disable the failure cooldown (by default, engines that just failed are skipped for 10 min on default runs) |
 | `--json` | machine-readable output (use this for further processing) |
 
@@ -216,6 +217,17 @@ Do not dump stdout or JSON at the user. Answer in this shape:
 - Two consecutive anomalies → run `doctor` once and report which engine is
   down, which key is missing, whether the proxy is detected. Don't keep
   re-rolling keywords.
+- **Wall clock**: a normal call is 2-4s. If one `search` call runs past ~15s,
+  do not retry the same query — switch to `--engine ddg,bing` for a fast
+  answer, or tell the user the network is slow and give them what you have.
+  A single slow engine should not cost the user three identical attempts.
+- **Proxy blocking the scrape engines** (doctor: several of `ddg baidu
+  sogouweb so360` failing while a proxy is active): retry once with
+  `--direct` (or `EASY_WEB_SEARCH_DIRECT=1`) before concluding the network is
+  at fault. Anti-bot layers often reject datacenter proxy exits but accept
+  the direct connection. `--direct` applies to `search`, `research` and
+  `doctor`; `fetch` always tries direct first and only proxies when the
+  environment says so.
 - `doctor` prints four statuses: `OK`, `SKIP` (key not configured), `WARN`
   (transient: anti-bot, rate limit, timeout, unparsable response) and `FAIL`
   (real problem). **`WARN` is normal and does not change the exit code** —
@@ -313,6 +325,11 @@ Fallback chain: direct fetch → Firecrawl scrape (when `FIRECRAWL_API_KEY`
 is set) → r.jina.ai reader. `via` in the JSON output tells you which path
 succeeded.
 
+Latency is **not** uniform: a direct fetch is ~1s, but when it falls through
+to the `r.jina.ai` reader the same call can take 10s+. That is the fallback
+working, not a hang — do not call `fetch` twice for the same URL, and do not
+report it as a failure when `ok` is true.
+
 ## Research workflow (multi-question tasks)
 
 For broad research requests ("research X", "compare options", "latest developments"):
@@ -325,6 +342,31 @@ For broad research requests ("research X", "compare options", "latest developmen
    multiple engines.
 5. Produce an answer with inline source links; state the per-engine coverage
    (e.g. "confirmed by ddg+bing") for load-bearing claims.
+
+## Install, update, MCP
+
+When the user asks how to install, upgrade, or wire this into a client — you
+do not need to hand-write any of it:
+
+```bash
+node scripts/setup.mjs            # detect agent skill dirs → install → verify
+node scripts/setup.mjs --list     # only show what it detected (no writes)
+node scripts/setup.mjs --dir <p>  # install into a specific dir (repeatable)
+```
+
+`setup.mjs` looks for `~/.claude/skills`, `~/.agents/skills` and
+project-level `.claude/skills` / `.agents/skills`, installs the skill folder,
+then runs doctor from the installed copy. Re-running it updates in place.
+
+Two other entry points exist and should be named accurately rather than
+invented:
+
+- `bin/cli.mjs` — a dispatcher (`search`, `fetch`, `doctor`, `setup`,
+  `research`, `mcp-serve`) for users who installed the npm package and want a
+  single `easy-websearch` command instead of script paths.
+- `server.mjs` — an MCP server (JSON-RPC 2.0 over stdio) exposing
+  `web_search`, `read_page`, `deep_research`, `engine_status`. Client config:
+  `{"mcpServers":{"easy-websearch":{"command":"node","args":["<path>/server.mjs"]}}}`.
 
 ## Anti-patterns
 
