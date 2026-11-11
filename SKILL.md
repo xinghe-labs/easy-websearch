@@ -207,12 +207,6 @@ Do not dump stdout or JSON at the user. Answer in this shape:
   this query** (it carries `note: "reachable, no hits for this query"`). That
   is not a failure — don't report it as one, and don't drop the engine from
   your mental model of what was searched.
-- A result with `demoted: true` had its score halved because **every engine
-  that returned it was an academic index** (arxiv/openalex/crossref/pubmed/
-  semanticscholar) on a query with no academic intent. They are still valid
-  results, but they answer a multi-word question with a single keyword, so
-  they sit below the general-web hits. For an academic question they are not
-  demoted at all.
 - A failed engine (e.g. `ddg: FAILED (HTTP 202)`) is normal and non-fatal:
   fusion continues with the rest. Do not retry the whole search because one
   engine failed.
