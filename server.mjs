@@ -23,8 +23,13 @@ import {
 
 // ────────────────────────────────────────── state ──
 import { readFileSync } from "node:fs";
-const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
-const SERVER_INFO = { name: "easy-websearch", version: pkg.version };
+// package.json is only used for the advertised version — never let a broken or
+// missing file take the whole MCP server down.
+let pkgVersion = "0.0.0";
+try {
+  pkgVersion = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version || pkgVersion;
+} catch { /* fall back to the placeholder version */ }
+const SERVER_INFO = { name: "easy-websearch", version: pkgVersion };
 const PROTOCOL_VERSION = "2024-11-05";
 
 // ─────────────────────────────── tool definitions ──
@@ -164,7 +169,6 @@ async function toolDeepResearch(args) {
     : [question, question + " tutorial", question + " best practices"];
 
   let budget = { searches: 0, fetches: 0 };
-  const evidence = [];
   const urlHits = new Map();
 
   async function doSearch(subQuery) {
@@ -326,7 +330,9 @@ rl.on("line", (line) => {
       send({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: `Unknown tool: ${name}` } });
       return;
     }
-    handler(toolArgs || {}).then(
+    // Handlers may be sync (engine_status) or async — Promise.resolve covers both;
+    // calling .then() on a sync return used to crash the whole server.
+    Promise.resolve(handler(toolArgs || {})).then(
       (result) => send({ jsonrpc: "2.0", id: msg.id, result }),
       (err) => send({
         jsonrpc: "2.0", id: msg.id,
