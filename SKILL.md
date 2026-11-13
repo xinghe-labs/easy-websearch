@@ -399,30 +399,52 @@ For broad research requests ("research X", "compare options", "latest developmen
 5. Produce an answer with inline source links; state the per-engine coverage
    (e.g. "confirmed by ddg+bing") for load-bearing claims.
 
-## Install, update, MCP
+## Install, update, MCP, CLI
 
-When the user asks how to install, upgrade, or wire this into a client — you
-do not need to hand-write any of it:
+One folder, three shapes. When the user asks how to install, upgrade, wire it
+into a client, or run it from a terminal, name these accurately — do not invent
+commands.
+
+**1) Agent skill** (this file — the shape you are using right now)
 
 ```bash
-node scripts/setup.mjs            # detect agent skill dirs → install → verify
-node scripts/setup.mjs --list     # only show what it detected (no writes)
-node scripts/setup.mjs --dir <p>  # install into a specific dir (repeatable)
+npx skills add xinghe-labs/easy-websearch          # or update in place
+node scripts/setup.mjs            # detect ~/.claude/skills, ~/.agents/skills, project dirs → install → doctor
+node scripts/setup.mjs --list     # dry run
+node scripts/setup.mjs --dir <p>  # explicit target (repeatable)
 ```
 
-`setup.mjs` looks for `~/.claude/skills`, `~/.agents/skills` and
-project-level `.claude/skills` / `.agents/skills`, installs the skill folder,
-then runs doctor from the installed copy. Re-running it updates in place.
+`setup.mjs` runs doctor from the installed copy, so a broken install fails
+loudly instead of silently.
 
-Two other entry points exist and should be named accurately rather than
-invented:
+**2) MCP server** — `server.mjs`, JSON-RPC 2.0 over stdio, four tools:
+`web_search`, `read_page`, `deep_research`, `engine_status`.
 
-- `bin/cli.mjs` — a dispatcher (`search`, `fetch`, `doctor`, `setup`,
-  `research`, `mcp-serve`) for users who installed the npm package and want a
-  single `easy-websearch` command instead of script paths.
-- `server.mjs` — an MCP server (JSON-RPC 2.0 over stdio) exposing
-  `web_search`, `read_page`, `deep_research`, `engine_status`. Client config:
-  `{"mcpServers":{"easy-websearch":{"command":"node","args":["<path>/server.mjs"]}}}`.
+```json
+{"mcpServers":{"easy-websearch":{"command":"node","args":["<path>/server.mjs"]}}}
+```
+
+It answers one-shot piped requests too, which is the fastest way to check a
+client-side problem:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call",
+       "params":{"name":"web_search","arguments":{"query":"webgpu","numResults":3}}}' | node server.mjs
+```
+
+**3) CLI** — `bin/cli.mjs`, installed as `easy-websearch`:
+
+```bash
+easy-websearch search "query" --lang zh -n 5
+easy-websearch fetch "https://example.com/article"
+easy-websearch research "question" --json
+easy-websearch doctor
+easy-websearch setup --list
+easy-websearch mcp-serve
+```
+
+All three share the same engines, filters and cooldown state — one install,
+same behaviour whichever entry point is used.
 
 ## Anti-patterns
 

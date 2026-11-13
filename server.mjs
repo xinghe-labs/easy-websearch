@@ -305,6 +305,11 @@ function send(msg) {
   process.stdout.write(JSON.stringify(msg) + "\n");
 }
 
+// A one-shot client (echo … | node server.mjs) closes stdin immediately; the
+// process must not exit before in-flight tool calls have answered.
+let pendingCalls = 0;
+let stdinClosed = false;
+
 rl.on("line", (line) => {
   let msg;
   try { msg = JSON.parse(line.trim()); } catch { return; }
@@ -332,13 +337,19 @@ rl.on("line", (line) => {
     }
     // Handlers may be sync (engine_status) or async — Promise.resolve covers both;
     // calling .then() on a sync return used to crash the whole server.
-    Promise.resolve(handler(toolArgs || {})).then(
-      (result) => send({ jsonrpc: "2.0", id: msg.id, result }),
-      (err) => send({
-        jsonrpc: "2.0", id: msg.id,
-        result: { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true },
-      })
-    );
+    pendingCalls++;
+    Promise.resolve(handler(toolArgs || {}))
+      .then(
+        (result) => send({ jsonrpc: "2.0", id: msg.id, result }),
+        (err) => send({
+          jsonrpc: "2.0", id: msg.id,
+          result: { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true },
+        })
+      )
+      .finally(() => {
+        pendingCalls--;
+        if (stdinClosed && pendingCalls === 0) process.exit(0);
+      });
   } else if (msg.method === "ping") {
     send({ jsonrpc: "2.0", id: msg.id, result: {} });
   } else if (msg.id !== undefined) {
@@ -346,4 +357,7 @@ rl.on("line", (line) => {
   }
 });
 
-rl.on("close", () => process.exit(0));
+rl.on("close", () => {
+  stdinClosed = true;
+  if (pendingCalls === 0) process.exit(0);
+});

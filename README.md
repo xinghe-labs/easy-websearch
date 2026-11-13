@@ -85,9 +85,16 @@ keys; optional keys upgrade the pool automatically (see
 
 ## Install
 
-Two install shapes — pick per use case (both can coexist):
+One folder, three ways to use it — pick any combination, they share the same
+engines, filters and cooldown:
 
-### As an agent skill (for Claude Code / Codex / Cursor / Gemini CLI…)
+| Shape | Entry point | Who calls it |
+|---|---|---|
+| **Agent skill** | `SKILL.md` + `scripts/` | the agent, mid-conversation |
+| **MCP server** | `server.mjs` (stdio JSON-RPC) | Claude Desktop / Cursor / any MCP client |
+| **CLI** | `bin/cli.mjs` → `easy-websearch` | you, in a terminal |
+
+### 1. As an agent skill (Claude Code / Codex / Cursor / Gemini CLI…)
 
 The agent then searches automatically whenever you ask it to.
 
@@ -97,27 +104,78 @@ npx skills add xinghe-labs/easy-websearch
 
 # or clone directly
 git clone https://github.com/xinghe-labs/easy-websearch ~/.claude/skills/easy-websearch
+
+# or let the skill install itself and verify the engines
+node scripts/setup.mjs            # detects ~/.claude/skills, ~/.agents/skills, project dirs
+node scripts/setup.mjs --list     # dry run: only show what it found
+node scripts/setup.mjs --dir ~/.agents/skills   # explicit target (repeatable)
 ```
 
-> Behind the GFW? Direct GitHub access can be flaky — the **npm route**
-> (`npm install -g easy-websearch`) never touches GitHub and is the most
-> reliable install path there.
+`setup.mjs` installs the folder, then runs `doctor` from the installed copy, so
+a broken install fails loudly instead of silently.
 
-### As a global CLI (for your own terminal)
+### 2. As an MCP server
+
+No install needed — point your client at `server.mjs`. It speaks JSON-RPC 2.0
+over stdio and exposes four tools: `web_search`, `read_page`, `deep_research`,
+`engine_status`.
+
+```json
+{
+  "mcpServers": {
+    "easy-websearch": {
+      "command": "node",
+      "args": ["/absolute/path/to/easy-websearch/server.mjs"]
+    }
+  }
+}
+```
+
+Same tools from a terminal, for debugging:
+
+```bash
+easy-websearch mcp-serve          # npm install -g route
+# or: node server.mjs
+```
+
+A request/response pair, so you can script against it:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call",
+       "params":{"name":"web_search","arguments":{"query":"webgpu","numResults":3}}}' \
+  | node server.mjs
+```
+
+`engine_status` reports every engine with its tier (`baseline` / `auto` /
+`backup` / `keyed`) and whether its key is configured — useful before blaming
+the network.
+
+### 3. As a CLI
 
 ```bash
 npm install -g easy-websearch
 ```
 
-Gives you the `easy-websearch` command everywhere — search / fetch / doctor /
-setup as subcommands. Or run without installing: `npx easy-websearch@latest doctor`
+Gives you the `easy-websearch` command everywhere. Or run without installing:
+`npx easy-websearch@latest doctor`
 
 ```bash
 easy-websearch search "大模型 本地部署" --lang zh -n 5
+easy-websearch search "webgpu" --engine ddg,bing --json
 easy-websearch fetch "https://example.com/article"
 easy-websearch research "compare local LLM deployment options" --json
 easy-websearch doctor
+easy-websearch setup --list
+easy-websearch mcp-serve
 ```
+
+Every subcommand forwards its flags to the matching script unchanged, so
+`easy-websearch search --help` and `node scripts/search.mjs --help` describe
+the same options.
+
+> Behind the GFW? Direct GitHub access can be flaky — the **npm route**
+> (`npm install -g easy-websearch`) never touches GitHub and is the most
+> reliable install path there.
 
 ### Engine keys (all optional)
 

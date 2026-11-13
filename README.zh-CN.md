@@ -75,9 +75,15 @@ easy-websearch search "大模型 本地部署" --lang zh -n 5
 
 ## 安装
 
-两种安装形态 —— 按用途选择（可共存）：
+一个文件夹，三种用法 —— 按需组合，它们共用同一套引擎、过滤规则和冷却状态：
 
-### 作为 agent 技能（Claude Code / Codex / Cursor / Gemini CLI…）
+| 形态 | 入口 | 谁来调用 |
+|---|---|---|
+| **Agent 技能** | `SKILL.md` + `scripts/` | agent，在对话中自动调用 |
+| **MCP 服务** | `server.mjs`（stdio JSON-RPC） | Claude Desktop / Cursor / 任意 MCP 客户端 |
+| **命令行** | `bin/cli.mjs` → `easy-websearch` | 你自己，在终端里 |
+
+### 1. 作为 agent 技能（Claude Code / Codex / Cursor / Gemini CLI…）
 
 装好后 agent 会在你要求搜索时自动调用。
 
@@ -87,26 +93,72 @@ npx skills add xinghe-labs/easy-websearch
 
 # 或直接克隆
 git clone https://github.com/xinghe-labs/easy-websearch ~/.claude/skills/easy-websearch
+
+# 或者让技能自己安装并自检
+node scripts/setup.mjs            # 自动探测 ~/.claude/skills、~/.agents/skills、项目目录
+node scripts/setup.mjs --list     # 只看探测结果，不写入
+node scripts/setup.mjs --dir ~/.agents/skills   # 指定目标（可重复）
 ```
 
-> 国内网络注意：直连 GitHub 可能不稳定（TLS 握手偶发失败）—— **npm 路径**
-> （`npm install -g easy-websearch`）完全不碰 GitHub，是国内最可靠的安装方式。
+`setup.mjs` 装完后会**从安装副本里跑一次 doctor**，装坏了会当场报错，而不是静默失效。
 
-### 作为全局命令行（自己的终端）
+### 2. 作为 MCP 服务
+
+不用安装，让客户端指向 `server.mjs` 即可。它说 JSON-RPC 2.0（stdio），暴露四个工具：
+`web_search`、`read_page`、`deep_research`、`engine_status`。
+
+```json
+{
+  "mcpServers": {
+    "easy-websearch": {
+      "command": "node",
+      "args": ["/绝对路径/easy-websearch/server.mjs"]
+    }
+  }
+}
+```
+
+终端里调试同一个服务：
+
+```bash
+easy-websearch mcp-serve          # 走 npm 全局安装
+# 或：node server.mjs
+```
+
+可以直接脚本化的请求/响应示例：
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call",
+       "params":{"name":"web_search","arguments":{"query":"webgpu","numResults":3}}}' \
+  | node server.mjs
+```
+
+`engine_status` 会列出每个引擎的分层（`baseline` / `auto` / `backup` / `keyed`）以及
+key 是否已配置 —— 排查问题先看它，别先怀疑网络。
+
+### 3. 作为命令行
 
 ```bash
 npm install -g easy-websearch
 ```
 
-全局安装后随处可用 `easy-websearch` 命令 —— search / fetch / doctor /
-setup 四个子命令。或免安装直接跑：`npx easy-websearch@latest doctor`
+之后任何地方都能用 `easy-websearch` 命令；不装也能跑：`npx easy-websearch@latest doctor`
 
 ```bash
 easy-websearch search "大模型 本地部署" --lang zh -n 5
+easy-websearch search "webgpu" --engine ddg,bing --json
 easy-websearch fetch "https://example.com/article"
-easy-websearch research "对比本地大模型部署方案" --json
+easy-websearch research "compare local LLM deployment options" --json
 easy-websearch doctor
+easy-websearch setup --list
+easy-websearch mcp-serve
 ```
+
+每个子命令的参数都会原样转发给对应脚本，所以 `easy-websearch search --help`
+和 `node scripts/search.mjs --help` 描述的是同一批选项。
+
+> 国内网络注意：直连 GitHub 可能不稳定（TLS 握手偶发失败）—— **npm 路径**
+> （`npm install -g easy-websearch`）完全不碰 GitHub，是国内最可靠的安装方式。
 
 ### 引擎 key（全部可选）
 
