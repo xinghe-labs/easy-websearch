@@ -165,6 +165,12 @@ def main() -> None:
             rows.append(fut.result())
     rows.sort(key=lambda r: list(ENGINES).index(r["engine"]))
 
+    # A vertical engine that needs a specific query shape (deepwiki wants an
+    # owner/repo) has not failed — the probe query simply does not apply.
+    for r in rows:
+        if r["status"] == "FAIL" and re.search(r"no owner/repo in query", r["note"], re.I):
+            r["status"] = "SKIP"
+            r["note"] = "needs an owner/repo in the query — not a failure"
     tested = [r for r in rows if r["status"] != "SKIP"]
     if not args.strict:
         for r in rows:

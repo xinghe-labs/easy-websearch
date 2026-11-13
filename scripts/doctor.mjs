@@ -138,6 +138,14 @@ const rows = await Promise.all(ALL.map(async (name) => {
   }
 }));
 
+// A vertical engine that needs a specific query shape (deepwiki wants an
+// owner/repo) has not failed — the probe query simply does not apply.
+for (const r of rows) {
+  if (r.status === "FAIL" && /no owner\/repo in query/i.test(r.note)) {
+    r.status = "SKIP";
+    r.note = "needs an owner/repo in the query — not a failure";
+  }
+}
 const tested = rows.filter((r) => r.status !== "SKIP");
 if (!strict) {
   for (const r of rows) {
