@@ -110,7 +110,7 @@ Chinese tech content) or for the session with
 Chinese queries get baidu in the default pool (no key) — plus bocha/metaso
 when configured.
 
-### Provider catalogue (68 engines)
+### Provider catalogue (70 engines)
 
 Beyond the ones above, 31 more providers are wired and dormant until their key
 exists. `doctor` lists each one as `SKIP … get it: <url>`, and `--engine <name>`
@@ -122,6 +122,7 @@ without the key answers `"<ENV> not set"` instead of failing obscurely.
 | Modern search APIs | `kagi` (KAGI_API_KEY), `serpdive` (SERPDIVE_API_KEY), `valyu` (VALYU_API_KEY), `you` (YOU_API_KEY), `jina` (JINA_API_KEY), `search1api` (SEARCH1API_API_KEY), `searchinfinity` (SEARCHINFINITY_API_KEY), `querit` (QUERIT_API_KEY), `sofya` (SOFYA_API_KEY), `outcrawl` (OUTCRAWL_API_KEY), `ceramic` (CERAMIC_API_KEY), `tinyfish` (TINYFISH_API_KEY), `tabstack` (TABSTACK_API_KEY), `parallel` (PARALLEL_API_KEY), `deepseek` (DEEPSEEK_API_KEY), `kimi` (KIMI_API_KEY), `perplexity` (PERPLEXITY_API_KEY) |
 | LLM-native search | `openai` (OPENAI_API_KEY), `xai` (XAI_API_KEY), `gemini` (GEMINI_API_KEY), `mistral` (MISTRAL_API_KEY) |
 | MCP-shaped | `baizhi` (BAIZHI_API_KEY), `zai` (ZAI_API_KEY) |
+| MCP-shaped, **keyless** | `deepwiki` (GitHub repo Q&A), `context7` (library docs) — auto tier, no key |
 | Self-hosted / account | `ninerouter` (NINEROUTER_BASE_URL), `cloudflare` (CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID), `brightdata` (BRIGHTDATA_API_KEY + BRIGHTDATA_ZONE) |
 
 None of these join the default pool — they run only when `--engine` names them
@@ -374,9 +375,11 @@ python3 scripts/fetch.py "https://example.com/article" [--json]
 ```
 
 Extracts readable content as Markdown (title + meta description + body).
-Fallback chain: direct fetch → Firecrawl scrape (when `FIRECRAWL_API_KEY`
-is set) → r.jina.ai reader. `via` in the JSON output tells you which path
-succeeded.
+Fallback chain: direct fetch → **exa MCP reader** (keyless) → **parallel MCP
+reader** (keyless) → Firecrawl scrape (when `FIRECRAWL_API_KEY` is set) →
+r.jina.ai reader. `via` in the JSON output tells you which path succeeded —
+in practice the two keyless MCP readers rescue pages the direct fetch cannot
+read (JS-heavy or anti-bot pages come back with full text).
 
 Latency is **not** uniform: a direct fetch is ~1s, but when it falls through
 to the `r.jina.ai` reader the same call can take 10s+. That is the fallback

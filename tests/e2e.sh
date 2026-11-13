@@ -133,6 +133,22 @@ import('./scripts/search.mjs').then(({ normalizeUrl }) => {
 });"
 check "url normalization drops tracking params" $?
 
+# --- keyless MCP verticals: routing only (offline, deterministic) ---
+node --input-type=module -e "
+import('./scripts/search.mjs').then(({ routeAuto }) => {
+  const cases = [
+    ['tokio-rs/tokio 调度器 实现', 'deepwiki', true],
+    ['tokio spawn 用法 文档', 'context7', true],
+    ['喝柠檬水能防癌 是真的吗', 'deepwiki', false],
+    ['喝柠檬水能防癌 是真的吗', 'context7', false],
+  ];
+  for (const [q, eng, want] of cases) {
+    const got = routeAuto(q).engines.includes(eng);
+    if (got !== want) { console.error('routeAuto', q, eng, 'want', want); process.exit(1); }
+  }
+});"
+check "deepwiki/context7 routing (offline)" $?
+
 if command -v python3 >/dev/null 2>&1; then
   python3 -c "
 import sys; sys.path.insert(0, 'scripts')

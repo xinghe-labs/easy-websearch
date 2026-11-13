@@ -644,6 +644,74 @@ async function engineDegoog(ctx) {
   return out.slice(0, ctx.n);
 }
 
+// ── Keyless MCP helpers ──────────────────────────────────────────────────
+// deepwiki (GitHub repo Q&A) and context7 (library docs) answer over the same
+// JSON-RPC shape as exa/parallel; both are free and need no key.
+const DEEPWIKI_MCP = "https://mcp.deepwiki.com/mcp";
+const CONTEXT7_MCP = "https://mcp.context7.com/mcp";
+
+async function mcpCall(url, toolName, args, timeout = 25000) {
+  const payload = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: toolName, arguments: args } };
+  const { status, body } = await fetchText(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "user-agent": "easy-websearch",
+    },
+    body: JSON.stringify(payload),
+    timeout,
+  });
+  if (status === 429) throw new Error("MCP rate limit (429) — retry later");
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  // Servers answer with plain JSON or with SSE frames — and a streaming server
+  // may emit several frames per call, so parse each frame and keep the last one
+  // that is actually JSON (joining frames would produce invalid JSON).
+  let parsed = null;
+  if (body.includes("data:")) {
+    for (const line of body.split("\n")) {
+      if (!line.startsWith("data:")) continue;
+      try { const f = JSON.parse(line.slice(5).trim()); if (f && (f.result || f.error)) parsed = f; } catch { /* partial frame */ }
+    }
+  }
+  if (!parsed) {
+    try { parsed = JSON.parse(body); } catch { throw new Error("invalid JSON from MCP"); }
+  }
+  if (parsed.error) throw new Error(parsed.error.message || "MCP error");
+  return parsed?.result?.content?.[0]?.text || "";
+}
+
+async function engineDeepwiki(ctx) {
+  const repo = (ctx.query.match(/\b([\w.-]+\/[\w.-]+)\b/) || [])[1];
+  if (!repo) throw new Error("no owner/repo in query");
+  const text = await mcpCall(DEEPWIKI_MCP, "ask_wiki_question", { repoName: repo, question: ctx.query });
+  if (!text) throw new Error("no results parsed");
+  const link = (text.match(/https:\/\/deepwiki\.com\/\S+/) || [])[0] || `https://deepwiki.com/${repo}`;
+  return [{ title: `DeepWiki · ${repo}`, url: link, snippet: text.replace(/\s+/g, " ").trim().slice(0, 400) }];
+}
+
+async function engineContext7(ctx) {
+  const resolved = await mcpCall(CONTEXT7_MCP, "resolve-library-id", { libraryName: ctx.query, query: ctx.query });
+  // The resolver returns prose: "Context7-compatible library ID: /websites/rs_tokio"
+  const id = (resolved.match(/library ID:\s*(\/[\w./-]+)/i) || resolved.match(/(\/[\w.-]+\/[\w.-]+)/) || [])[1];
+  if (!id) throw new Error("no results parsed");
+  const docs = await mcpCall(CONTEXT7_MCP, "query-docs", { libraryId: id, query: ctx.query });
+  const out = [];
+  // Each section carries "Source: <url>"; use it as the citation for that chunk.
+  for (const block of docs.split(/(?=^### )/m)) {
+    const src = (block.match(/Source:\s*(https?:\/\/\S+)/i) || [])[1];
+    if (!src) continue;
+    const heading = (block.match(/^###\s+(.+)$/m) || [])[1] || src;
+    const body = block.replace(/Source:\s*\S+/i, "").replace(/^###.*$/m, "").replace(/\s+/g, " ").trim();
+    out.push({ title: `${heading} — ${id}`, url: src, snippet: body.slice(0, 400) });
+    if (out.length >= ctx.n) break;
+  }
+  if (out.length === 0) {
+    out.push({ title: `Context7 · ${id}`, url: `https://context7.com${id}`, snippet: docs.replace(/\s+/g, " ").trim().slice(0, 400) });
+  }
+  return out;
+}
+
 // Exa's free MCP endpoint — no API key, same backend the built-in web_search
 // uses. Returns real page highlights instead of a bare SERP, which is why its
 // result quality is far above the scraped-HTML engines. Rate-limited (429) on
@@ -1495,6 +1563,9 @@ const ENGINES = {
   examcp: { fn: engineExaMcp, key: null },
   // Keyless Parallel MCP (free tier) — page excerpts, like examcp.
   parallelmcp: { fn: engineParallelMcp, key: null },
+  // Keyless MCP verticals: repo Q&A and library docs (auto tier).
+  deepwiki: { fn: engineDeepwiki, key: null, auto: true },
+  context7: { fn: engineContext7, key: null, auto: true },
   // Keyless degoog public instance — Google results.
   degoog: { fn: engineDegoog, key: null },
   firecrawl: { fn: engineFirecrawl, key: "FIRECRAWL_API_KEY" },
@@ -1563,6 +1634,12 @@ function routeAuto(query) {
   // "喝柠檬水能防癌".
   if (/(编程|代码|程序员|开发者|教程|报错|调试|\bbug\b|算法|面试|框架|源码|数据库|\bsql\b|docker|k8s|kubernetes|linux|\bgit\b|\bapi\b|\bsdk\b|javascript|typescript|python|\bjava\b|golang|\brust\b|\breact\b|\bvue\b|node\.?js|webpack|vite|\bcss\b|\bhtml\b|掘金|juejin|csdn|机器学习|深度学习|大模型|\bllm\b|模型部署|神经网络)/.test(q)) add.push("juejin", "csdn");
   if (/(huggingface|数据集|dataset|模型权重|safetensors)/.test(q)) add.push("huggingface");
+  // Repo Q&A: only when the query actually names an owner/repo.
+  if (/(github|仓库|源码|实现|架构|internals|architecture|codebase)/.test(q)
+      && /\b[\w.-]+\/[\w.-]+\b/.test(q)) add.push("deepwiki");
+  // Library docs: a docs-ish ask about a library/API.
+  if (/(文档|用法|怎么用|\bapi\b|\bdocs?\b|usage|教程)/.test(q)
+      && /(python|javascript|typescript|rust|\bgo\b|\bjava\b|react|vue|node|tokio|npm|pip|docker|sql|redis|kafka|fastapi|django|flask|express|next\.?js)/.test(q)) add.push("context7");
   return { engines: add, intlQuery: extractIntlQuery(query) };
 }
 

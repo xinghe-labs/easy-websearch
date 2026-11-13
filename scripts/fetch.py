@@ -21,6 +21,7 @@ import re
 import sys
 import urllib.error
 import urllib.parse
+import urllib.request
 from urllib.request import build_opener
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -28,8 +29,9 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 
 def http_text(url: str, headers: dict | None = None,
-              timeout: float = 15) -> tuple[int, str, str]:
-    """GET an http(s) URL, return (status, body, final_url). Follows redirects."""
+              timeout: float = 15, method: str = "GET",
+              data: bytes | None = None) -> tuple[int, str, str]:
+    """Fetch an http(s) URL, return (status, body, final_url). Follows redirects."""
     # Explicit scheme allowlist: only plain http(s) URLs may reach the opener.
     if not url.lower().startswith(("http://", "https://")):
         raise RuntimeError(f"disallowed URL scheme (want http/https): {url[:80]}")
@@ -43,7 +45,9 @@ def http_text(url: str, headers: dict | None = None,
         **(headers or {}),
     }.items())
     try:
-        with opener.open(safe_url, timeout=timeout) as r:
+        # safe_url passed the explicit http/https allowlist above.
+        with opener.open(urllib.request.Request(safe_url, data=data, method=method),  # noqa: S310
+                         timeout=timeout) as r:
             final = r.geturl()
             return r.status, r.read().decode("utf-8", "ignore"), final
     except urllib.error.HTTPError as e:
@@ -123,6 +127,17 @@ def extract(url: str, timeout: float, max_chars: int) -> dict:
     except (RuntimeError, urllib.error.URLError, OSError) as e:
         direct_error = f"{type(e).__name__}: {e}"  # fall through to reader fallback
 
+    # 1b) Keyless MCP readers — cleaner than the jina reader, no key required.
+    for reader in (lambda: exa_fetch(url, timeout, max_chars),
+                   lambda: parallel_fetch(url, timeout)):
+        try:
+            got = reader()
+        except (RuntimeError, OSError):
+            got = None
+        if got:
+            return {"ok": True, "via": got["via"], "url": url,
+                    "chars": len(got["content"]), "content": got["content"][:max_chars]}
+
     # 2) Firecrawl scrape (when FIRECRAWL_API_KEY is set) — higher quality
     #    extraction than the reader fallback, uses the key's quota.
     firecrawl_error = ""
@@ -153,6 +168,72 @@ def extract(url: str, timeout: float, max_chars: int) -> dict:
                       f"({direct_error or 'empty/short content'}; {firecrawl_error or 'not configured/empty'}); "
                       f"reader fallback HTTP {status} — the target site may have rejected the reader too "
                       f"(note: fetch targets HTML pages — read JSON/text endpoints directly)")}
+
+
+# ---------------------------------------------------- keyless MCP readers ----
+# exa and parallel both expose a free fetch tool over the same JSON-RPC shape
+# their search uses. They extract cleaner text than r.jina.ai and need no key.
+EXA_MCP_FETCH = "https://mcp.exa.ai/mcp?tools=web_fetch_exa"
+PARALLEL_MCP = "https://search.parallel.ai/mcp"
+
+
+def _mcp_fetch_text(url: str, tool: str, arguments: dict, timeout: float) -> str | None:
+    payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+               "params": {"name": tool, "arguments": arguments}}
+    try:
+        status, body, _ = http_text(url, method="POST", data=json.dumps(payload).encode(),
+                                    headers={"content-type": "application/json",
+                                             "accept": "application/json, text/event-stream",
+                                             "user-agent": "easy-websearch"},
+                                    timeout=timeout)
+    except (RuntimeError, OSError):
+        return None
+    if status != 200:
+        return None
+    parsed = None
+    if "data:" in body:
+        for line in body.split("\n"):
+            if not line.startswith("data:"):
+                continue
+            try:
+                frame = json.loads(line[5:].strip())
+            except ValueError:
+                continue
+            if isinstance(frame, dict) and frame.get("result"):
+                parsed = frame
+    if parsed is None:
+        try:
+            parsed = json.loads(body)
+        except ValueError:
+            return None
+    content = (parsed.get("result") or {}).get("content") or []
+    return content[0].get("text") if content and isinstance(content[0], dict) else None
+
+
+def exa_fetch(url: str, timeout: float, max_chars: int) -> dict | None:
+    text = _mcp_fetch_text(EXA_MCP_FETCH, "web_fetch_exa",
+                           {"urls": [url], "maxCharacters": max_chars}, timeout)
+    if not text or len(text) < 100:
+        return None
+    return {"via": "exa-mcp", "content": text}
+
+
+def parallel_fetch(url: str, timeout: float) -> dict | None:
+    text = _mcp_fetch_text(PARALLEL_MCP, "web_fetch",
+                           {"urls": [url], "objective": "extract the readable content of this page"},
+                           timeout)
+    if not text:
+        return None
+    try:
+        inner = json.loads(text)
+    except ValueError:
+        return None
+    hit = (inner.get("results") or [{}])[0]
+    content = "\n\n".join(hit.get("excerpts") or []).strip()
+    if len(content) < 100:
+        return None
+    title = hit.get("title")
+    return {"via": "parallel-mcp", "content": (f"# {title}\n\n" if title else "") + content}
 
 
 def main() -> None:

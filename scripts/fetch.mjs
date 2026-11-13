@@ -55,7 +55,7 @@ function proxyConnect(proxyUrl, host, port, timeout = DEFAULT_TIMEOUT) {
   });
 }
 
-function fetchText(url, { headers = {}, timeout = DEFAULT_TIMEOUT } = {}, depth = 0) {
+function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_TIMEOUT } = {}, depth = 0) {
   let u;
   try { u = new URL(url); } catch { return Promise.reject(new Error(`invalid URL: ${url}`)); }
   const isHttps = u.protocol === "https:";
@@ -80,7 +80,7 @@ function fetchText(url, { headers = {}, timeout = DEFAULT_TIMEOUT } = {}, depth 
       try { activeSocket?.destroy(); } catch { /* already gone */ }
       finish(reject, new Error("timeout"));
     }, timeout);
-    const opts = { method: "GET", headers: { "user-agent": UA, "accept-language": "zh-CN,zh;q=0.9,en;q=0.8", ...headers } };
+    const opts = { method, headers: { "user-agent": UA, "accept-language": "zh-CN,zh;q=0.9,en;q=0.8", ...headers } };
     const handler = (res) => {
       // Follow up to 5 redirects ourselves (keeps the proxy tunnel intact).
       // The counter is what actually bounds the chain — without it a redirect
@@ -92,7 +92,7 @@ function fetchText(url, { headers = {}, timeout = DEFAULT_TIMEOUT } = {}, depth 
           return;
         }
         const next = new URL(res.headers.location, url).toString();
-        fetchText(next, { headers, timeout }, depth + 1).then((v) => finish(resolve, v), (e) => finish(reject, e));
+        fetchText(next, { method, headers, body, timeout }, depth + 1).then((v) => finish(resolve, v), (e) => finish(reject, e));
         return;
       }
       const chunks = [];
@@ -107,6 +107,7 @@ function fetchText(url, { headers = {}, timeout = DEFAULT_TIMEOUT } = {}, depth 
         activeReq = req;
         req.setTimeout(timeout, () => req.destroy(new Error("timeout")));
         req.on("error", (e) => finish(reject, e));
+        if (body) req.write(body);
         req.end();
       }, (e) => finish(reject, e));
     } else {
@@ -114,6 +115,7 @@ function fetchText(url, { headers = {}, timeout = DEFAULT_TIMEOUT } = {}, depth 
       activeReq = req;
       req.setTimeout(timeout, () => req.destroy(new Error("timeout")));
       req.on("error", (e) => finish(reject, e));
+      if (body) req.write(body);
       req.end();
     }
   });
@@ -163,6 +165,53 @@ function htmlToMarkdown(html) {
 }
 
 // ---------------------------------------------------------------- main ----
+// ---------------------------------------------------- keyless MCP readers ----
+// exa and parallel both expose a free fetch tool over the same JSON-RPC shape
+// their search uses. They extract cleaner text than r.jina.ai and need no key.
+async function mcpFetchText(url, toolName, args) {
+  const payload = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: toolName, arguments: args } };
+  const { status, body } = await fetchText(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "user-agent": "easy-websearch",
+    },
+    body: JSON.stringify(payload),
+    timeout: Math.max(flags.timeout, 20000),
+  });
+  if (status !== 200) return null;
+  let parsed = null;
+  if (body.includes("data:")) {
+    for (const line of body.split("\n")) {
+      if (!line.startsWith("data:")) continue;
+      try { const f = JSON.parse(line.slice(5).trim()); if (f?.result) parsed = f; } catch { /* partial */ }
+    }
+  }
+  if (!parsed) { try { parsed = JSON.parse(body); } catch { return null; } }
+  return parsed?.result?.content?.[0]?.text || null;
+}
+
+async function exaFetch(url) {
+  const text = await mcpFetchText("https://mcp.exa.ai/mcp?tools=web_fetch_exa", "web_fetch_exa",
+    { urls: [url], maxCharacters: flags.maxChars });
+  if (!text || text.length < 100) return null;
+  // The reader prefixes "# Title\nURL: <url>" — keep it, it is useful context.
+  return { via: "exa-mcp", content: text };
+}
+
+async function parallelFetch(url) {
+  const text = await mcpFetchText("https://search.parallel.ai/mcp", "web_fetch",
+    { urls: [url], objective: "extract the readable content of this page" });
+  if (!text) return null;
+  let inner;
+  try { inner = JSON.parse(text); } catch { return null; }
+  const hit = (inner.results || [])[0];
+  const content = (hit?.excerpts || []).join("\n\n").trim();
+  if (content.length < 100) return null;
+  return { via: "parallel-mcp", content: `${hit.title ? `# ${hit.title}\n\n` : ""}${content}` };
+}
+
 async function run() {
   // 1) Direct fetch + local extraction.
   try {
@@ -174,6 +223,14 @@ async function run() {
       }
     }
   } catch { /* direct fetch failed (blocked/timeout/empty) → reader fallback */ }
+
+  // 1b) Keyless MCP readers — cleaner than the jina reader, no key required.
+  for (const reader of [exaFetch, parallelFetch]) {
+    try {
+      const got = await reader(url);
+      if (got) return { ok: true, via: got.via, url, chars: got.content.length, content: got.content.slice(0, flags.maxChars) };
+    } catch { /* try the next reader */ }
+  }
 
   // 2) Firecrawl scrape (when FIRECRAWL_API_KEY is set) — higher quality
   //    extraction than the reader fallback, uses the key's quota.

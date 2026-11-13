@@ -641,6 +641,91 @@ def engine_degoog(ctx):
     return out[: ctx["n"]]
 
 
+# ── Keyless MCP verticals ────────────────────────────────────────────────
+# deepwiki (GitHub repo Q&A) and context7 (library docs) answer over the same
+# JSON-RPC shape as exa/parallel; both are free and need no key.
+DEEPWIKI_MCP = "https://mcp.deepwiki.com/mcp"
+CONTEXT7_MCP = "https://mcp.context7.com/mcp"
+
+
+def _mcp_call(url, tool_name, arguments, timeout=25):
+    payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+               "params": {"name": tool_name, "arguments": arguments}}
+    status, body = http_text(url, method="POST", data=json.dumps(payload).encode(),
+                             headers={"content-type": "application/json",
+                                      "accept": "application/json, text/event-stream",
+                                      "user-agent": "easy-websearch"},
+                             timeout=timeout)
+    if status == 429:
+        raise RuntimeError("MCP rate limit (429) — retry later")
+    if status != 200:
+        raise RuntimeError(f"HTTP {status}")
+    # Servers answer with plain JSON or with SSE frames — and a streaming server
+    # may emit several frames per call, so parse each frame and keep the last one
+    # that is actually JSON (joining frames would produce invalid JSON).
+    parsed = None
+    if "data:" in body:
+        for line in body.split("\n"):
+            if not line.startswith("data:"):
+                continue
+            try:
+                frame = json.loads(line[5:].strip())
+            except ValueError:
+                continue
+            if isinstance(frame, dict) and (frame.get("result") or frame.get("error")):
+                parsed = frame
+    if parsed is None:
+        try:
+            parsed = json.loads(body)
+        except ValueError:
+            raise RuntimeError("invalid JSON from MCP") from None
+    if parsed.get("error"):
+        raise RuntimeError(parsed["error"].get("message") or "MCP error")
+    content = (parsed.get("result") or {}).get("content") or []
+    return content[0].get("text", "") if content else ""
+
+
+def engine_deepwiki(ctx):
+    m = re.search(r"\b([\w.-]+/[\w.-]+)\b", ctx["query"])
+    if not m:
+        raise RuntimeError("no owner/repo in query")
+    repo = m.group(1)
+    text = _mcp_call(DEEPWIKI_MCP, "ask_wiki_question", {"repoName": repo, "question": ctx["query"]})
+    if not text:
+        raise RuntimeError("no results parsed")
+    link = re.search(r"https://deepwiki\.com/\S+", text)
+    return [{"title": f"DeepWiki · {repo}",
+             "url": link.group(0) if link else f"https://deepwiki.com/{repo}",
+             "snippet": re.sub(r"\s+", " ", text).strip()[:400]}]
+
+
+def engine_context7(ctx):
+    resolved = _mcp_call(CONTEXT7_MCP, "resolve-library-id",
+                         {"libraryName": ctx["query"], "query": ctx["query"]})
+    m = re.search(r"library ID:\s*(/[\w./-]+)", resolved, re.I) or re.search(r"(/[\w.-]+/[\w.-]+)", resolved)
+    if not m:
+        raise RuntimeError("no results parsed")
+    lib_id = m.group(1)
+    docs = _mcp_call(CONTEXT7_MCP, "query-docs", {"libraryId": lib_id, "query": ctx["query"]})
+    out = []
+    for block in re.split(r"(?=^### )", docs, flags=re.M):
+        src = re.search(r"Source:\s*(https?://\S+)", block, re.I)
+        if not src:
+            continue
+        heading = re.search(r"^###\s+(.+)$", block, re.M)
+        body = re.sub(r"Source:\s*\S+", "", block, flags=re.I)
+        body = re.sub(r"^###.*$", "", body, flags=re.M)
+        out.append({"title": f"{(heading.group(1) if heading else src.group(1)).strip()} — {lib_id}",
+                    "url": src.group(1),
+                    "snippet": re.sub(r"\s+", " ", body).strip()[:400]})
+        if len(out) >= ctx["n"]:
+            break
+    if not out:
+        out.append({"title": f"Context7 · {lib_id}", "url": f"https://context7.com{lib_id}",
+                    "snippet": re.sub(r"\s+", " ", docs).strip()[:400]})
+    return out
+
+
 def engine_examcp(ctx):
     payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                "params": {"name": "web_search_exa",
@@ -1499,6 +1584,9 @@ ENGINES = {
     "examcp": (engine_examcp, None, frozenset()),
     # Keyless Parallel MCP (free tier) — page excerpts, like examcp.
     "parallelmcp": (engine_parallel_mcp, None, frozenset()),
+    # Keyless MCP verticals: repo Q&A and library docs (auto tier).
+    "deepwiki": (engine_deepwiki, None, frozenset({"auto"})),
+    "context7": (engine_context7, None, frozenset({"auto"})),
     # Keyless degoog public instance — Google results.
     "degoog": (engine_degoog, None, frozenset()),
     "firecrawl": (engine_firecrawl, "FIRECRAWL_API_KEY", frozenset()),
@@ -1570,6 +1658,14 @@ def route_auto(query: str, env: dict | None = None) -> dict:
         add.extend(["juejin", "csdn"])
     if re.search(r"huggingface|数据集|dataset|模型权重|model weights|safetensors|embedding 模型", q):
         add.append("huggingface")
+    # Repo Q&A: only when the query actually names an owner/repo.
+    if re.search(r"github|仓库|源码|实现|架构|internals|architecture|codebase", q) \
+            and re.search(r"\b[\w.-]+/[\w.-]+\b", q):
+        add.append("deepwiki")
+    # Library docs: a docs-ish ask about a library/API.
+    if re.search(r"文档|用法|怎么用|\bapi\b|\bdocs?\b|usage|教程", q) \
+            and re.search(r"python|javascript|typescript|rust|\bgo\b|\bjava\b|react|vue|node|tokio|npm|pip|docker|sql|redis|kafka|fastapi|django|flask|express|next\.?js", q):
+        add.append("context7")
     return {"engines": add, "intl_query": _extract_intl_query(query)}
 
 
