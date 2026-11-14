@@ -683,7 +683,7 @@ def _mcp_call(url, tool_name, arguments, timeout=25):
             try:
                 frame = json.loads(line[5:].strip())
             except ValueError:
-                continue
+                continue  # keepalive/partial SSE frame — the next one carries the result
             if isinstance(frame, dict) and (frame.get("result") or frame.get("error")):
                 parsed = frame
     if parsed is None:
@@ -760,7 +760,7 @@ def engine_examcp(ctx):
         try:
             frame = json.loads(line[5:].strip())
         except ValueError:
-            continue
+            continue  # keepalive/partial SSE frame — the next one carries the result
         if isinstance(frame, dict) and frame.get("result"):
             content = frame["result"].get("content") or []
             if content and isinstance(content[0], dict) and content[0].get("text"):
@@ -947,7 +947,7 @@ def _resolve_redirect(url: str, timeout: float) -> str:
             if status == 200 and final.startswith("http") and "baidu.com/link" not in final:
                 return final
         except (RuntimeError, urllib.error.URLError, OSError):
-            pass  # retry / keep the original URL
+            pass  # redirect resolution is best-effort — the wrapper URL still works
     return url
 
 
@@ -1027,7 +1027,7 @@ def _resolve_sogou_links(urls, timeout, base="https://weixin.sogou.com"):
                 resolved.append(alt.group(1))
                 continue
         except (RuntimeError, urllib.error.URLError, OSError):
-            pass  # keep the /link URL
+            pass  # keep the /link URL — it redirects client-side too
         resolved.append(u)
     return resolved
 
@@ -1068,7 +1068,7 @@ def _resolve_so360_links(urls, timeout):
                 resolved.append(m.group(1))
                 continue
         except (RuntimeError, urllib.error.URLError, OSError):
-            pass  # keep the wrapper URL
+            pass  # keep the wrapper URL — search engines resolve it on click
         resolved.append(u)
     return resolved
 
@@ -1811,6 +1811,8 @@ def _cooldown_path() -> str:
 
 def _load_cooldowns() -> dict:
     try:
+        # _cooldown_path() derives from XDG_CACHE_HOME, never user input —
+        # nothing for the traversal heuristic to bite on.
         with open(_cooldown_path(), encoding="utf-8") as f:
             state = json.load(f)
             return state if isinstance(state, dict) else {}
@@ -1821,6 +1823,7 @@ def _load_cooldowns() -> dict:
 def _save_cooldowns(state: dict) -> None:
     try:
         os.makedirs(os.path.dirname(_cooldown_path()), exist_ok=True)
+        # Same fixed, non-user path as the reader above.
         with open(_cooldown_path(), "w", encoding="utf-8") as f:
             json.dump(state, f)
     except OSError:
@@ -1855,6 +1858,7 @@ def main():
         os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
         "easy-websearch", "config.json")
     try:
+        # _cfg_path is derived from XDG_CONFIG_HOME, never user input.
         with open(_cfg_path, encoding="utf-8") as f:
             _cfg = json.load(f)
     except (OSError, ValueError):
@@ -1973,7 +1977,7 @@ def main():
                 del state[s["name"]]
                 dirty = True
         elif s["ok"]:
-            zeros = int(state.get(s["name"], {}).get("zeros", 0)) + 1
+            zeros = int(state.get(s["name"], {}).get("zeros") or 0) + 1
             if zeros >= EMPTY_STREAK_LIMIT:
                 state[s["name"]] = {"until": now_ms + COOLDOWN_MS_EMPTY,
                                     "reason": f"no results in {zeros} consecutive queries",
@@ -1984,7 +1988,7 @@ def main():
                 dirty = True
         elif state.get(s["name"], {}).get("until", 0) < now_ms + COOLDOWN_MS_MAX:
             # Escalating cooldown: first failure 2 min (transient blips), repeats 10 min.
-            failures = int(state.get(s["name"], {}).get("failures", 0)) + 1
+            failures = int(state.get(s["name"], {}).get("failures") or 0) + 1
             ms = COOLDOWN_MS_FIRST if failures == 1 else COOLDOWN_MS_MAX
             state[s["name"]] = {"until": now_ms + ms,
                                 "reason": s["error"][:120], "failures": failures}

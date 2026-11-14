@@ -198,7 +198,7 @@ def _mcp_fetch_text(url: str, tool: str, arguments: dict, timeout: float) -> str
             try:
                 frame = json.loads(line[5:].strip())
             except ValueError:
-                continue
+                continue  # keepalive/partial SSE frame — the next one carries the result
             if isinstance(frame, dict) and frame.get("result"):
                 parsed = frame
     if parsed is None:

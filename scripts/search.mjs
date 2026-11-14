@@ -585,7 +585,7 @@ function parseBingResults(ctx, body) {
       try {
         const decoded = Buffer.from(u[1], "base64").toString("utf8");
         if (/^https?:\/\//.test(decoded)) url = decoded;
-      } catch { /* keep the redirect URL */ }
+      } catch { /* not base64 — keep the redirect URL */ }
     }
     const title = stripTags(m[2]);
     const snip = stripTags(m[3]).slice(0, 400);
@@ -777,7 +777,7 @@ async function mcpCall(url, toolName, args, timeout = 25000) {
   if (body.includes("data:")) {
     for (const line of body.split("\n")) {
       if (!line.startsWith("data:")) continue;
-      try { const f = JSON.parse(line.slice(5).trim()); if (f && (f.result || f.error)) parsed = f; } catch { /* partial frame */ }
+      try { const f = JSON.parse(line.slice(5).trim()); if (f && (f.result || f.error)) parsed = f; } catch { /* partial/keepalive SSE frame — the next frame carries the result */ }
     }
   }
   if (!parsed) {
@@ -867,7 +867,7 @@ async function engineExaMcp(ctx) {
     try {
       const frame = JSON.parse(line.slice(5).trim());
       if (frame?.result) text = frame.result.content?.[0]?.text || text;
-    } catch { /* partial/keepalive frame */ }
+    } catch { /* partial/keepalive SSE frame — the next frame carries the result */ }
   }
   if (!text) throw new Error("no results parsed");
   return parseExaMcpText(ctx, text);
@@ -1034,7 +1034,7 @@ async function resolveRedirect(url, timeout) {
           !/baidu\.com\/link/.test(r.finalUrl)) {
         return r.finalUrl;
       }
-    } catch { /* retry / keep the original URL */ }
+    } catch { /* redirect resolution is best-effort — the wrapper URL still works */ }
   }
   return url;
 }
@@ -1107,7 +1107,7 @@ async function resolveSogouLinks(urls, timeout, base = "https://weixin.sogou.com
       if (/^https?:\/\//.test(target)) return target;
       const alt = body.match(/window\.location\.replace\("([^"]+)"\)/);
       if (alt && /^https?:\/\//.test(alt[1])) return alt[1];
-    } catch { /* keep the /link URL */ }
+    } catch { /* redirect resolution is best-effort — the wrapper URL still works */ }
     return u;
   }));
 }
@@ -1140,7 +1140,7 @@ function resolveSo360Links(urls, timeout) {
                 body.match(/window\.location\.href\s*=\s*"([^"]+)"/) ||
                 body.match(/URL='([^']+)'/);
       if (m && /^https?:\/\//.test(m[1])) return m[1];
-    } catch { /* keep the wrapper URL */ }
+    } catch { /* redirect resolution is best-effort — the wrapper URL still works */ }
     return u;
   }));
 }
@@ -1543,7 +1543,7 @@ async function engineGoogleCse(ctx) {
   });
   if (status !== 200) {
     let msg = "";
-    try { msg = ": " + String(parseJson(body)?.error?.message || "").slice(0, 100); } catch { /* keep empty */ }
+    try { msg = ": " + String(parseJson(body)?.error?.message || "").slice(0, 100); } catch { /* partial/keepalive SSE frame — the next frame carries the result */ }
     throw new Error(`HTTP ${status}${msg}`);
   }
   const items = parseJson(body)?.items || [];
@@ -1860,7 +1860,7 @@ function saveCooldowns(state) {
   try {
     fs.mkdirSync(path.dirname(cooldownPath()), { recursive: true });
     fs.writeFileSync(cooldownPath(), JSON.stringify(state));
-  } catch { /* best effort — cooldown is an optimization, not a guarantee */ }
+  } catch { /* cooldown is an optimization — never fail the search over its bookkeeping */ }
 }
 
 // ---------------------------------------------------------------- main ----

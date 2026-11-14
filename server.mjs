@@ -236,7 +236,7 @@ async function toolDeepResearch(args) {
           const text = stripTags(body).replace(/\s+/g, " ").trim();
           return { url, ok: true, excerpt: text.slice(0, 2000) };
         }
-      } catch { /* skip */ }
+      } catch { /* skip: unparseable frame, try the next URL */ }
       return null;
     })
   );
