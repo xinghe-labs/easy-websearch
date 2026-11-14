@@ -110,6 +110,20 @@ function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_
         if (body) req.write(body);
         req.end();
       }, (e) => finish(reject, e));
+    } else if (proxy && !FORCE_DIRECT) {
+      // Plain http:// through an HTTP proxy uses absolute-form request-URI.
+      let pu;
+      try { pu = new URL(proxy); } catch { pu = null; }
+      if (!pu) { finish(reject, new Error(`invalid proxy URL: ${proxy}`)); return; }
+      const req = http.request(
+        { ...opts, host: pu.hostname, port: parseInt(pu.port, 10) || 80, path: url, headers: { ...opts.headers, host: u.host } },
+        handler
+      );
+      activeReq = req;
+      req.setTimeout(timeout, () => req.destroy(new Error("timeout")));
+      req.on("error", (e) => finish(reject, e));
+      if (body) req.write(body);
+      req.end();
     } else {
       const req = mod.request(url, opts, handler);
       activeReq = req;

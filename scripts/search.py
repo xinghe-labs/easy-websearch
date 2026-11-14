@@ -127,7 +127,8 @@ def http_text(url: str, method: str = "GET", headers: dict | None = None,
     # `Content-Type: application/x-www-form-urlencoded` for data-bearing
     # requests runs first and addheaders lose to it (observed: Bocha 415).
     # A handler registered after the defaults overwrites that header.
-    opener = build_opener(ProxyHandler({})) if direct else build_opener()
+    use_direct = direct or _force_direct(url)
+    opener = build_opener(ProxyHandler({})) if use_direct else build_opener()
     opener.add_handler(_HeaderInjector(merged))
     opener.add_handler(HTTPCookieProcessor(COOKIE_JAR))
     try:
@@ -169,7 +170,8 @@ def http_text_final(url: str, headers: dict | None = None,
         "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
         **(headers or {}),
     }
-    opener = build_opener(ProxyHandler({})) if _force_direct(url) else build_opener()
+    use_direct = direct or _force_direct(url)
+    opener = build_opener(ProxyHandler({})) if use_direct else build_opener()
     opener.add_handler(_HeaderInjector(merged))
     opener.add_handler(HTTPCookieProcessor(COOKIE_JAR))
     try:
@@ -1669,6 +1671,63 @@ def route_auto(query: str, env: dict | None = None) -> dict:
     return {"engines": add, "intl_query": _extract_intl_query(query)}
 
 
+ENGINE_ALIASES = {
+    "duckduckgo": "ddg", "ddg_html": "ddg", "ddg_lite": "ddg",
+    "google": "serper", "googlesearch": "serper",
+    "sogou": "sogouweb", "sogou_web": "sogouweb", "360": "so360", "so": "so360",
+    "baidu_search": "baidu", "bing_cn": "bing", "bingcn": "bing",
+    "gh": "github", "wiki": "wikipedia",
+    "hf": "huggingface", "s2": "semanticscholar", "semantischolar": "semanticscholar",
+    "exa_mcp": "examcp", "parallel_mcp": "parallelmcp", "para": "parallel",
+    "context7_docs": "context7", "deepwiki_mcp": "deepwiki",
+    "brave_search": "brave", "tavily_search": "tavily", "firecrawl_search": "firecrawl",
+}
+
+
+def resolve_engine_name(raw: str) -> str | None:
+    n = (raw or "").strip().lower()
+    if n in ENGINES:
+        return n
+    alias = ENGINE_ALIASES.get(n)
+    return alias if alias in ENGINES else None
+
+
+def suggest_engine(raw: str) -> str | None:
+    """Cheap edit distance — only used for a \"did you mean …\" hint."""
+    n = (raw or "").strip().lower()
+
+    def dist(a: str, b: str) -> int:
+        prev = list(range(len(b) + 1))
+        for i, ca in enumerate(a, 1):
+            cur = [i]
+            for j, cb in enumerate(b, 1):
+                cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+            prev = cur
+        return prev[-1]
+
+    best, best_d = None, 10 ** 9
+    for name in ENGINES:
+        d = dist(n, name)
+        if d < best_d:
+            best, best_d = name, d
+    return best if best_d <= max(2, len(n) // 3) else None
+
+
+def engine_groups() -> dict:
+    """Grouped engine names for --help, derived from the registry."""
+    groups = {"always on": [], "on intent": [], "opt-in": [], "need a key": []}
+    for name, (fn, key, flags) in ENGINES.items():
+        if "backup" in flags:
+            groups["opt-in"].append(name)
+        elif "auto" in flags:
+            groups["on intent"].append(name)
+        elif key and "optional_key" not in flags:
+            groups["need a key"].append(name)
+        else:
+            groups["always on"].append(name)
+    return groups
+
+
 def available_engines(filter_str, env):
     if filter_str:
         names = [s.strip() for s in filter_str.split(",") if s.strip()]
@@ -1753,9 +1812,15 @@ def main():
     p.add_argument("--engine", default="")
     p.add_argument("--timeout", type=int, default=8)
     p.add_argument("--no-cooldown", action="store_true")
+    p.add_argument("--fast", action="store_true",
+                   help="quick lookup: ddg, bing, examcp, parallelmcp")
     p.add_argument("--direct", action="store_true",
                    help="bypass any proxy for all engines")
     p.add_argument("--json", action="store_true")
+    groups = engine_groups()
+    epilog = "\n".join(f"  {label:<11} {', '.join(names)}"
+                       for label, names in groups.items() if names)
+    p.epilog = f"Engines ({len(ENGINES)} total):\n{epilog}\n\nRun scripts/doctor.py to check engine health."
     args = p.parse_args()
 
     # Config file: ~/.config/easy-websearch/config.json (CLI flags override)
@@ -1773,6 +1838,11 @@ def main():
         args.num = _cfg["n"]
     if not args.direct and _cfg.get("direct"):
         args.direct = True
+    # --direct is process-wide in the Node twin (setForceDirect in main()); the
+    # Python twin relies on _FORCE_DIRECT, which nothing set from args — so
+    # --direct was silently ignored here.
+    if args.direct:
+        set_force_direct(True)
     if not args.engine and _cfg.get("engines"):
         args.engine = _cfg["engines"]
 
@@ -1786,14 +1856,28 @@ def main():
 
     ctx = {"query": build_query(args), "n": args.num, "days": args.days,
            "lang": args.lang.lower(), "timeout": args.timeout, "env": env}
-    engines = available_engines(args.engine, env)
     if args.engine:
-        requested = [s.strip() for s in args.engine.split(",") if s.strip()]
-        unknown = [n for n in requested if n not in ENGINES]
+        resolved, unknown = [], []
+        for raw in [s.strip() for s in args.engine.split(",") if s.strip()]:
+            name = resolve_engine_name(raw)
+            if name:
+                if name not in resolved:
+                    resolved.append(name)
+            else:
+                unknown.append(raw)
         if unknown:
-            print(f"Unknown engine(s): {', '.join(unknown)}\n"
-                  f"Valid engines: {', '.join(ENGINES)}", file=sys.stderr)
+            for raw in unknown:
+                guess = suggest_engine(raw)
+                print(f"Unknown engine: {raw}" + (f' — did you mean "{guess}"?' if guess else ""),
+                      file=sys.stderr)
+            print("Run with --help for the full engine list, or --engine to pick from it.",
+                  file=sys.stderr)
             sys.exit(2)
+        args.engine = ",".join(resolved)
+    if args.fast and not args.engine:
+        engines = [(n, ENGINES[n][0]) for n in ("ddg", "bing", "examcp", "parallelmcp") if n in ENGINES]
+    else:
+        engines = available_engines(args.engine, env)
     if not engines:
         print("No search engines available (baseline ddg/bing need network; "
               "keyed engines need their env vars).\n"
@@ -1916,15 +2000,27 @@ def main():
                   and not any(_in(_host(r["url"]), d) for d in excluded)]
     fused = [r for r in ranked if not _is_off_topic_scraped_hit(r, ctx["query"])][: args.num]
 
+    answered = [st for st in statuses if st["ok"]]
+    failed_engines = [st["name"] for st in statuses if not st["ok"]]
+    all_failed = not answered
+
     if args.json:
         print(json.dumps({
             "query": ctx["query"],
+            # Top-level status so a script can tell "nothing found" from
+            # "everything broke" without walking the engines array.
+            "ok": bool(fused),
+            "all_failed": all_failed,
+            "engines_ok": [st["name"] for st in answered],
+            "engines_failed": failed_engines,
             "engines": [{k: s[k] for k in ("name", "ok", "count", "ms", "error", "note") if k in s} for s in all_engines],
             "results": [{"rank": i + 1, "title": r["title"], "url": r["url"],
                          "snippet": r["snippet"], "score": round(r["score"], 4),
                          "engines": r["engines"]}
                         for i, r in enumerate(fused)],
         }, ensure_ascii=False, indent=2))
+        if all_failed:
+            sys.exit(1)  # mirror the JS twin: scripts can branch on this
     else:
         lines = "\n  ".join(
             f"{s['name']}: {s['count']} results in {s['ms']}ms" + (f" [{s['note']}]" if s.get('note') else "") if s["ok"]

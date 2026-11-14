@@ -210,8 +210,12 @@ def main() -> None:
         for r in rows:
             mark = marks.get(r["status"], "–")
             print(f"  {mark} {r['engine']:<{w}} {r['status']:<5} {r['ms']:>5}ms  {r['note']}")
-        print(f"\n{len(tested)} tested, {len(rows) - len(tested)} skipped, "
+        skipped = len(rows) - len(tested)
+        print(f"\n{len(tested)} tested, {skipped} skipped, "
               f"{len(failed)} failed, {len(warned)} warned")
+        if skipped > 0:
+            print(f"– = optional engines with no key configured ({skipped}). Nothing is broken —")
+            print("  set a key to enable one; each SKIP line above names the variable and signup URL.")
         if warned and not args.strict:
             print("⚠ = transient (anti-bot / rate limit / timeout) — expected on public engines, not an install problem")
             print("  run with --strict to treat these as failures")

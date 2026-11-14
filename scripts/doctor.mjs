@@ -182,7 +182,12 @@ if (asJson) {
     const mark = r.status === "OK" ? "✓" : r.status === "FAIL" ? "✗" : r.status === "WARN" ? "⚠" : "–";
     console.log(`  ${mark} ${r.engine.padEnd(w)} ${r.status.padEnd(5)} ${String(r.ms).padStart(5)}ms  ${r.note}`);
   }
-  console.log(`\n${tested.length} tested, ${rows.length - tested.length} skipped, ${failed.length} failed, ${warned.length} warned`);
+  const skipped = rows.length - tested.length;
+  console.log(`\n${tested.length} tested, ${skipped} skipped, ${failed.length} failed, ${warned.length} warned`);
+  if (skipped > 0) {
+    console.log(`– = optional engines with no key configured (${skipped}). Nothing is broken —`);
+    console.log(`  set a key to enable one; each SKIP line above names the variable and signup URL.`);
+  }
   if (warned.length && !strict) {
     console.log("⚠ = transient (anti-bot / rate limit / timeout) — expected on public engines, not an install problem");
     console.log("  run with --strict to treat these as failures");

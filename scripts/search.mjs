@@ -43,28 +43,94 @@ function loadConfig() {
 const USAGE = 'Usage: node search.mjs "query" [-n 10] [--days 7] [--site d] [--exclude-site d] [--lang zh] [--engine ddg,bing] [--timeout 8] [--no-cooldown] [--direct] [--json]';
 
 const VALUE_FLAGS = new Set(["-n", "--num", "--days", "--site", "--exclude-site", "--lang", "--engine", "--timeout"]);
-const KNOWN_FLAGS = new Set([...VALUE_FLAGS, "--json", "--no-cooldown", "--direct", "--help", "-h"]);
+const KNOWN_FLAGS = new Set([...VALUE_FLAGS, "--json", "--no-cooldown", "--direct", "--fast", "--help", "-h"]);
+
+// What people actually type vs what the registry calls it.
+const ENGINE_ALIASES = {
+  duckduckgo: "ddg", ddg_html: "ddg", ddg_lite: "ddg",
+  google: "serper", googlesearch: "serper", googlecse: "googlecse",
+  sogou: "sogouweb", sogou_web: "sogouweb", "360": "so360", so: "so360",
+  baidu_search: "baidu", bing_cn: "bing", bingcn: "bing",
+  gh: "github", wiki: "wikipedia", wikipedia_zh: "wikipedia",
+  arxiv_org: "arxiv", hf: "huggingface", huggface: "huggingface",
+  semantischolar: "semanticscholar", s2: "semanticscholar",
+  exa_mcp: "examcp", exa_mcp_free: "examcp", parallel_mcp: "parallelmcp",
+  para: "parallel", context7_docs: "context7", deepwiki_mcp: "deepwiki",
+  tavily_search: "tavily", brave_search: "brave", firecrawl_search: "firecrawl",
+};
+
+function resolveEngineName(raw) {
+  const n = String(raw || "").trim().toLowerCase();
+  if (ENGINES[n]) return n;
+  if (ENGINE_ALIASES[n] && ENGINES[ENGINE_ALIASES[n]]) return ENGINE_ALIASES[n];
+  return null;
+}
+
+// Cheap edit distance — only used to say "did you mean …".
+function editDistance(a, b) {
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+function suggestEngine(raw) {
+  const n = String(raw || "").trim().toLowerCase();
+  let best = null;
+  let bestD = Infinity;
+  for (const name of Object.keys(ENGINES)) {
+    const d = editDistance(n, name);
+    if (d < bestD) { bestD = d; best = name; }
+  }
+  return bestD <= Math.max(2, Math.floor(n.length / 3)) ? best : null;
+}
 
 function printHelp() {
+  // Engine lists are derived from the registry, so --help can never advertise a
+  // stale subset again.
+  const names = Object.keys(ENGINES);
+  const isFn = (n) => typeof ENGINES[n] === "function";
+  const obj = (n) => (typeof ENGINES[n] === "object" ? ENGINES[n] : {});
+  const baseline = names.filter((n) => isFn(n));
+  const keylessDefault = names.filter((n) => !isFn(n) && !obj(n).auto && !obj(n).backup
+    && (!obj(n).key || obj(n).optionalKey));
+  const keylessAuto = names.filter((n) => !isFn(n) && obj(n).auto && (!obj(n).key || obj(n).optionalKey));
+  const backup = names.filter((n) => !isFn(n) && obj(n).backup);
+  const keyed = names.filter((n) => !isFn(n) && !obj(n).backup && obj(n).key && !obj(n).optionalKey);
+  const wrap = (arr) => arr.join(", ");
+
   console.log(USAGE);
   console.log(`
-Engines: ddg, bing (baseline, no key) | brave, tavily, serper, exa,
-  firecrawl, bocha, metaso, linkup, ollama (auto-enabled by their *_API_KEY)
-  | anysearch, keenable (keyless backups, opt-in via --engine or
-  EASY_WEB_SEARCH_ENGINES)
+Engines (${names.length} total):
+  always on   ${wrap([...baseline, ...keylessDefault])}
+  on intent   ${wrap(keylessAuto)}
+  opt-in      ${wrap(backup)}   (--engine or EASY_WEB_SEARCH_ENGINES)
+  need a key  ${wrap(keyed)}
+
 Options:
   -n, --num <k>           max results (default 10)
   --days <n>              time window (ddg: day/week/month; exa: exact; bocha: freshness)
   --site <domain>         restrict to domain (repeatable)
   --exclude-site <domain> exclude domain (repeatable)
   --lang <zh|en>          language/region boost
-  --engine <a,b,c>        restrict/enable engines (comma-separated)
-  --timeout <sec>         per-engine timeout (default 8)
+  --engine <a,b,c>        restrict/enable engines (comma-separated, aliases ok)
+  --fast                  quick lookup: ddg, bing, examcp, parallelmcp
+  --timeout <sec>         per-attempt timeout (default 8)
   --no-cooldown           ignore the failure cooldown for this run
   --direct                bypass any proxy for all engines (see README Troubleshooting)
-  --json                  machine-readable output
+  --json                  machine-readable output (adds ok / all_failed)
   -h, --help              show this help
-See README.md for details. Config: ~/.config/easy-websearch/config.json\nRun scripts/doctor.mjs to check engine health.`);
+
+Config: ~/.config/easy-websearch/config.json
+Run scripts/doctor.mjs to check engine health.`);
 }
 
 function parseArgs(argv) {
@@ -95,6 +161,7 @@ function parseArgs(argv) {
     else if (a === "--timeout") args.timeout = (parseInt(argv[++i], 10) || 8) * 1000;
     else if (a === "--json") args.json = true;
     else if (a === "--no-cooldown") args.noCooldown = true;
+    else if (a === "--fast") args.fast = true;
     else if (a === "--direct") args.direct = true;
     else rest.push(a);
   }
@@ -209,6 +276,28 @@ function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_
         if (body) req.write(body);
         req.end();
       }, (e) => finish(reject, e));
+    } else if (proxy && !FORCE_DIRECT) {
+      // Plain http:// through an HTTP proxy uses absolute-form request-URI, not
+      // a tunnel. Without this branch http targets silently bypassed the proxy,
+      // so the same install reached the network two different ways.
+      let pu;
+      try { pu = new URL(proxy); } catch { pu = null; }
+      if (!pu) { finish(reject, new Error(`invalid proxy URL: ${proxy}`)); return; }
+      const req = http.request(
+        {
+          ...opts,
+          host: pu.hostname,
+          port: parseInt(pu.port, 10) || 80,
+          path: url,
+          headers: { ...opts.headers, host: u.host },
+        },
+        handler
+      );
+      activeReq = req;
+      req.setTimeout(timeout, () => req.destroy(new Error("timeout")));
+      req.on("error", (e) => finish(reject, e));
+      if (body) req.write(body);
+      req.end();
     } else {
       const req = mod.request(url, opts, handler);
       activeReq = req;
@@ -1751,13 +1840,33 @@ async function main() {
   const ctx = { ...args, query: buildQuery(args) };
   if (args.engines) {
     const requested = args.engines.split(",").map((s) => s.trim()).filter(Boolean);
-    const unknown = requested.filter((n) => !ENGINES[n]);
+    const resolved = [];
+    const unknown = [];
+    for (const raw of requested) {
+      const name = resolveEngineName(raw);
+      if (name) { if (!resolved.includes(name)) resolved.push(name); }
+      else unknown.push(raw);
+    }
     if (unknown.length) {
-      console.error(`Unknown engine(s): ${unknown.join(", ")}\nValid engines: ${Object.keys(ENGINES).join(", ")}`);
+      // Name what is wrong, suggest a fix, and keep the full list behind --help
+      // instead of dumping 70 names on every typo.
+      for (const raw of unknown) {
+        const guess = suggestEngine(raw);
+        console.error(`Unknown engine: ${raw}${guess ? ` — did you mean "${guess}"?` : ""}`);
+      }
+      console.error("Run with --help for the full engine list, or --engine to pick from it.");
       process.exit(2);
     }
+    args.engines = resolved.join(",");
   }
-  let engines = availableEngines(args.engines);
+  let engines;
+  if (args.fast && !args.engines) {
+    // Quick lookups: skip the slow/unreliable scrapers and the verticals.
+    const fastSet = ["ddg", "bing", "examcp", "parallelmcp"];
+    engines = fastSet.filter((n) => ENGINES[n]);
+  } else {
+    engines = availableEngines(args.engines);
+  }
   if (engines.length === 0) {
     console.error("No search engines available (baseline ddg/bing need network; keyed engines need their env vars).\nValid engines: " + Object.keys(ENGINES).join(", "));
     process.exit(2);
@@ -1866,15 +1975,26 @@ async function main() {
   }
   const fused = ranked.filter((r) => !isOffTopicScrapedHit(r, ctx.query)).slice(0, args.n);
 
+  const answered = statuses.filter((st) => st.ok);
+  const failedEngines = statuses.filter((st) => !st.ok).map((st) => st.name);
+  const allFailed = answered.length === 0;
+
   if (args.json) {
     console.log(JSON.stringify({
       query: ctx.query,
+      // Top-level status so a script can tell "nothing found" from "everything
+      // broke" without walking the engines array.
+      ok: fused.length > 0,
+      all_failed: allFailed,
+      engines_ok: answered.map((st) => st.name),
+      engines_failed: failedEngines,
       engines: allEngines.map(({ name, ok, count, ms, error, note }) => ({ name, ok, count, ms, error, ...(note ? { note } : {}) })),
       results: fused.map((r, i) => ({
         rank: i + 1, title: r.title, url: r.url, snippet: r.snippet,
         score: +r.score.toFixed(4), engines: r.engines,
       })),
     }, null, 2));
+    if (allFailed) process.exitCode = 1;
   } else {
     const engineLine = allEngines
       .map((s) => `${s.name}: ${s.ok ? s.count + " results" : s.count === 0 && s.ms === 0 && s.error.startsWith("skipped") ? s.error : "FAILED (" + s.error + ")"} in ${s.ms}ms${s.note ? ` [${s.note}]` : ""}`)
