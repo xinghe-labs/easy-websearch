@@ -223,6 +223,19 @@ function proxyConnect(proxyUrl, host, port, timeout = DEFAULT_TIMEOUT) {
 let FORCE_DIRECT = false; // set by main() from --direct / EASY_WEB_SEARCH_DIRECT
 function setForceDirect(v = true) { FORCE_DIRECT = v; }
 
+// CN engines whose anti-bot layers datacenter-rate proxy exits bypass the proxy
+// per-host (mirrors search.py's _DIRECT_HOSTS). so360 succeeds direct where the
+// same query through the proxy gets a captcha (observed 2026-11).
+const DIRECT_HOSTS = new Set([
+  "baidu.com", "weixin.sogou.com", "sogou.com", "so.com", "360.cn",
+  "localhost", "127.0.0.1",
+]);
+
+function shouldBypassProxy(url) {
+  try { const h = new URL(url).hostname.toLowerCase(); return [...DIRECT_HOSTS].some((d) => h === d || h.endsWith("." + d)); }
+  catch { return false; }
+}
+
 function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_TIMEOUT } = {}, depth = 0) {
   let u;
   try { u = new URL(url); } catch { return Promise.reject(new Error(`invalid URL: ${url}`)); }
@@ -261,7 +274,7 @@ function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_
         ...outgoing,
       },
     };
-    if (proxy && isHttps && !FORCE_DIRECT) {
+    if (proxy && isHttps && !FORCE_DIRECT && !shouldBypassProxy(url)) {
       // Socket is tunneled; request must address the target via the socket.
       proxyConnect(proxy, u.hostname, u.port || 443, timeout).then((socket) => {
         if (settled) { socket.destroy(); return; } // timed out while connecting
@@ -276,7 +289,7 @@ function fetchText(url, { method = "GET", headers = {}, body, timeout = DEFAULT_
         if (body) req.write(body);
         req.end();
       }, (e) => finish(reject, e));
-    } else if (proxy && !FORCE_DIRECT) {
+    } else if (proxy && !FORCE_DIRECT && !shouldBypassProxy(url)) {
       // Plain http:// through an HTTP proxy uses absolute-form request-URI, not
       // a tunnel. Without this branch http targets silently bypassed the proxy,
       // so the same install reached the network two different ways.
@@ -471,7 +484,9 @@ const DDG_ENDPOINTS = [
 async function engineDDG(ctx) {
   const params = ddgParams(ctx);
   let lastErr;
+  const deadline = rotationDeadline(ctx);
   for (const ep of DDG_ENDPOINTS) {
+    if (lastErr && rotationExpired(deadline)) break;
     try {
       let status, body;
       if (ep.parse === parseDdgLite) {
@@ -586,7 +601,9 @@ async function engineBing(ctx) {
   if (ctx.lang === "zh") { params.set("mkt", "zh-CN"); params.set("setlang", "zh"); }
   else if (ctx.lang === "en") { params.set("mkt", "en-US"); params.set("setlang", "en"); }
   let lastErr;
+  const deadline = rotationDeadline(ctx);
   for (const host of BING_HOSTS) {
+    if (lastErr && rotationExpired(deadline)) break;
     try {
       const { status, body } = await retryFetch(`${host}/search?${params}`, {
         timeout: ctx.timeout,
@@ -1046,7 +1063,9 @@ function parseBaiduResults(ctx, body) {
 async function engineBaidu(ctx) {
   const rn = String(Math.min(Math.max(ctx.n, 1), 20));
   let lastErr;
+  const deadline = rotationDeadline(ctx);
   for (const variant of BAIDU_VARIANTS) {
+    if (lastErr && rotationExpired(deadline)) break;
     const { url, referer } = variant(ctx.query, rn);
     try {
       const { status, body } = await retryFetch(url, {
@@ -1197,7 +1216,9 @@ const SO360_VARIANTS = [
 
 async function engineSo360(ctx) {
   let lastErr;
+  const deadline = rotationDeadline(ctx);
   for (const variant of SO360_VARIANTS) {
+    if (lastErr && rotationExpired(deadline)) break;
     const { url: buildUrl, referer, parse } = variant;
     try {
       const { status, body } = await fetchText(buildUrl(ctx.query), {
@@ -1704,6 +1725,20 @@ function extractIntlQuery(query) {
   return cleaned.sort((a, b) => b.length - a.length)[0];
 }
 
+// Endpoint rotation gives an engine retries at its own timeout each; without a
+// shared budget a dead first endpoint costs the full chain (observed: ddg 3
+// endpoints × retry × 8s = 16s wall). The budget caps total wall time per
+// engine at timeout × ROTATION_BUDGET, checked before each new attempt.
+const ROTATION_BUDGET = 2;
+
+function rotationDeadline(ctx) {
+  return Date.now() + ctx.timeout * ROTATION_BUDGET;
+}
+
+function rotationExpired(deadline) {
+  return Date.now() >= deadline;
+}
+
 function routeAuto(query) {
   const add = [];
   const q = query.toLowerCase();
@@ -1836,7 +1871,13 @@ async function main() {
     console.error(`${USAGE}\nRun with --help for details.`);
     process.exit(2);
   }
+  // --fast is for quick lookups: its pool is small but the scrapers rotate
+  // endpoints on failure, so the default 8s timeout turned a dead ddg into a
+  // 16s wall. Quick lookups want a short fuse by default.
   FORCE_DIRECT = args.direct || process.env.EASY_WEB_SEARCH_DIRECT === "1";
+  // --fast default timeout: 4s. Only applies when the user did not pass
+  // --timeout explicitly (parseArgs leaves the DEFAULT_TIMEOUT marker).
+  if (args.fast && args.timeout === DEFAULT_TIMEOUT) args.timeout = 4000;
   const ctx = { ...args, query: buildQuery(args) };
   if (args.engines) {
     const requested = args.engines.split(",").map((s) => s.trim()).filter(Boolean);
@@ -2018,6 +2059,6 @@ import { pathToFileURL } from "node:url";
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) await main();
 
-export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk, isOffTopicScrapedHit, cooldownPath, searxngBaseAndAuth, setForceDirect, routeAuto, extractIntlQuery, fetchText, stripTags, parseJson, normalizeUrl, fuse,
+export { ENGINES, availableEngines, parseArgs, buildQuery, looksLikeJunk, isOffTopicScrapedHit, cooldownPath, searxngBaseAndAuth, setForceDirect, shouldBypassProxy, routeAuto, extractIntlQuery, fetchText, stripTags, parseJson, normalizeUrl, fuse,
   // SERP parsers (tested against tests/snapshots/ in both runtimes)
   parseDdgHtml, parseDdgLite, parseBingResults, parseBingRss, parseBaiduResults, parseSo360Desktop, parseSo360Mobile, parseBingNewsRss };

@@ -50,6 +50,9 @@ RRF_K = 60
 
 
 _DIRECT_HOSTS = ("baidu.com", "weixin.sogou.com", "sogou.com",
+                 # so360 succeeds direct where the proxy exit gets a captcha
+                 # (observed 2026-11); its /link redirects stay same-host.
+                 "so.com", "360.cn",
                  "localhost", "127.0.0.1", "::1")
 
 
@@ -159,10 +162,11 @@ def retry_http_text(url, method="GET", headers=None, data=None, timeout=8,
 
 
 def http_text_final(url: str, headers: dict | None = None,
-                    timeout: float = 8) -> tuple[int, str, str]:
+                    timeout: float = 8, direct: bool = False) -> tuple[int, str, str]:
     """GET an http(s) URL and return (status, body, final_url) after redirects."""
     if not url.lower().startswith(("http://", "https://")):
         raise RuntimeError(f"disallowed URL scheme (want http/https): {url[:80]}")
+    direct = direct or _FORCE_DIRECT or os.environ.get("EASY_WEB_SEARCH_DIRECT") == "1"
     safe_url: str = urllib.parse.urlunsplit(urllib.parse.urlsplit(url))
     merged = {
         "User-agent": UA,
@@ -292,7 +296,10 @@ _DD_ENDPOINTS = (
 def engine_ddg(ctx):
     qs = urllib.parse.urlencode(_ddg_params(ctx))
     last_err = None
+    deadline = time.time() + ctx["timeout"] * ROTATION_BUDGET
     for url, parse, method in _DD_ENDPOINTS:
+        if last_err is not None and _rotation_expired(deadline):
+            break
         try:
             if method == "POST":
                 status, body = http_text(url, method="POST", data=qs.encode(),
@@ -482,7 +489,10 @@ def engine_bing(ctx):
         params.update({"mkt": "en-US", "setlang": "en"})
     qs = urllib.parse.urlencode(params)
     last_err = None
+    deadline = time.time() + ctx["timeout"] * ROTATION_BUDGET
     for host in _BING_HOSTS:
+        if last_err is not None and _rotation_expired(deadline):
+            break
         try:
             status, body = http_text(f"{host}/search?{qs}",
                                      timeout=ctx["timeout"],
@@ -968,7 +978,10 @@ def _parse_baidu_results(ctx, body):
 def engine_baidu(ctx):
     rn = str(min(max(ctx["n"], 1), 20))
     last_err = None
+    deadline = time.time() + ctx["timeout"] * ROTATION_BUDGET
     for url, referer in _baidu_variants(ctx["query"], rn):
+        if last_err is not None and _rotation_expired(deadline):
+            break
         try:
             status, body = retry_http_text(url, timeout=ctx["timeout"], direct=True,
                                            headers={"referer": referer})
@@ -1140,7 +1153,10 @@ _SO360_VARIANTS = (
 
 def engine_so360(ctx):
     last_err = None
+    deadline = time.time() + ctx["timeout"] * ROTATION_BUDGET
     for url_fn, referer, parse in _SO360_VARIANTS:
+        if last_err is not None and _rotation_expired(deadline):
+            break
         try:
             status, body = retry_http_text(url_fn(ctx["query"]), timeout=ctx["timeout"],
                                            direct=True, headers={"referer": referer})
@@ -1713,10 +1729,21 @@ def suggest_engine(raw: str) -> str | None:
     return best if best_d <= max(2, len(n) // 3) else None
 
 
+# Endpoint rotation gives an engine retries at its own timeout each; without a
+# shared budget a dead first endpoint costs the full chain (observed: ddg 3
+# endpoints x retry x 8s = 16s wall). The budget caps total wall time per
+# engine at timeout x ROTATION_BUDGET, checked before each new attempt.
+ROTATION_BUDGET = 2
+
+
+def _rotation_expired(deadline: float) -> bool:
+    return time.time() >= deadline
+
+
 def engine_groups() -> dict:
     """Grouped engine names for --help, derived from the registry."""
     groups = {"always on": [], "on intent": [], "opt-in": [], "need a key": []}
-    for name, (fn, key, flags) in ENGINES.items():
+    for name, (_fn, key, flags) in ENGINES.items():
         if "backup" in flags:
             groups["opt-in"].append(name)
         elif "auto" in flags:
@@ -1875,6 +1902,11 @@ def main():
             sys.exit(2)
         args.engine = ",".join(resolved)
     if args.fast and not args.engine:
+        # --fast default timeout: 4s (the scrapers rotate endpoints on failure;
+        # the default 8s turned a dead ddg into a 16s wall). Explicit --timeout
+        # still wins.
+        if args.timeout == p.get_default("timeout"):
+            args.timeout = 4
         engines = [(n, ENGINES[n][0]) for n in ("ddg", "bing", "examcp", "parallelmcp") if n in ENGINES]
     else:
         engines = available_engines(args.engine, env)
